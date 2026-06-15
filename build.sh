@@ -43,7 +43,7 @@ Environment:
 
 Requirements:
   - curl, jq, tar, python3
-  - clang or gcc (or \$ANDROID_NDK_HOME configured for cross-compiling)
+  - native aarch64 Termux clang, or \$ANDROID_NDK_HOME with an aarch64 Android clang
 EOF
 }
 
@@ -87,16 +87,13 @@ detect_compiler() {
     fi
   fi
 
-  if [[ -x "/data/data/com.termux/files/usr/bin/clang" ]]; then
-    echo "/data/data/com.termux/files/usr/bin/clang"
-    return 0
-  fi
+  local machine_arch
+  local termux_prefix
+  machine_arch="$(uname -m)"
+  termux_prefix="${PREFIX:-/data/data/com.termux/files/usr}"
 
-  if command -v clang &>/dev/null; then
-    echo "clang"
-    return 0
-  elif command -v gcc &>/dev/null; then
-    echo "gcc"
+  if [[ "$machine_arch" == "aarch64" && -x "$termux_prefix/bin/clang" ]]; then
+    echo "$termux_prefix/bin/clang"
     return 0
   fi
 
@@ -109,7 +106,7 @@ check_prereqs
 # Detect C compiler
 local_cc=""
 if ! local_cc=$(detect_compiler); then
-  die "No suitable C compiler found (clang/gcc or ANDROID_NDK_HOME not configured)."
+  die "No supported aarch64 C compiler found. Install Termux clang on aarch64, or set ANDROID_NDK_HOME with an aarch64 Android clang."
 fi
 info "Selected C compiler: $local_cc"
 
