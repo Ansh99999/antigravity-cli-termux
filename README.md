@@ -45,7 +45,7 @@ To circumvent this, a relocatable C bootstrapper (`agy`) is compiled:
 The engine requires ARMv8.1-A Atomics (LSE) to run natively. On older ARMv8.0-A CPUs lacking LSE support, the binary will crash with an "Illegal Instruction".
 This fork includes an automated compatibility layer:
 * **Detection**: The installer and bootstrapper automatically detect if the CPU lacks LSE support via `getauxval(AT_HWCAP)`.
-* **QEMU Emulation**: If LSE is missing, the bootstrapper automatically wraps the engine execution with `qemu-aarch64`. The installer will offer to auto-install QEMU via `pkg` (Termux) or `apt` (PRoot/chroot).
+* **QEMU Emulation**: If LSE is missing and `qemu-aarch64` is already installed, the bootstrapper wraps engine execution through it. If QEMU is missing, the installer reports that the `qemu-user-aarch64` package may be needed and exits without installing packages automatically.
 
 #### 4. Native Termux Only
 This standalone port is intentionally scoped to native Termux on Android. PRoot environments can run Google's official Antigravity CLI binary directly, so this project no longer ships a PRoot compatibility layer.
