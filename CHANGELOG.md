@@ -1,6 +1,27 @@
 # Antigravity CLI Changelog
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
+
+## 1.0.8
+
+- Added support for capturing slash command history, allowing users to use the up arrow to replay previously entered slash commands.
+- Redesigned the "Models & Quota" page (enabled by default, replacing the legacy usage page) to gracefully handle disabled quota buckets by displaying a dimmed "Disabled" status and omitting the progress bar.
+- Added display of quota usage and execution mode in the status line.
+- Improved `/btw` to be more token efficient and support streaming responses for a smoother user experience and fixed premature truncation.
+- Fixed a bug where the `/hooks` command wrote configurations to `~/.gemini/antigravity-cli/hooks.json` instead of the shared `~/.gemini/config/hooks.json`, ensuring hooks remain synchronized between the TUI and the backend.
+- Fixed a CPU compatibility issue (SIGILL on non-AES-NI CPUs), preventing immediate crashes on startup on older CPUs (like Intel Ivy Bridge) or VM environments that lack AES-NI support.
+- Added a per-line guard against extremely long single-line pastes in the TUI prompt editor to prevent performance lag, replacing them with an expandable placeholder.
+- Redesigned the `/resume` conversation picker to align the workspace column and added adaptive column dropping (workspace, time, steps) to support narrow terminals.
+- Redesigned the `/tasks` list and detail views for better alignment and readability, placing start times on the left, right-aligning status, and capping the panel height.
+- Fixed dynamic reloading of custom skills and system slash commands, ensuring they are instantly discovered in autocomplete upon conversation switch or `/add-dir`.
+- Improved configuration saving by propagating write failures as transient error flashes on the statusline.
+- Improved settings inheritance by ensuring the CLI inherits the `use_ai_credits` setting from global user settings on startup.
+- Fixed a TUI hang in the artifact view during long sessions by optimizing the rendering complexity of large step histories.
+- Fixed an autocomplete bug where a command that is an exact prefix of another (e.g., `/conv` vs `/conv-switch`) would aggressively auto-complete and hide the suggestions menu.
+- Fixed a race condition where sending a message immediately after denying a permission request would fail due to incomplete backend cleanup.
+- Fixed potential OOM risks when reading large clipboard files by verifying file size before reading.
+- Fixed Windows and Wayland-only Linux distributions clipboard image and file reading.
+
 ## 1.0.7
 
 - Added a configurable timeout for launching MCP servers, allowing users to specify a custom timeout or set it to `-1` to disable the timeout completely.
