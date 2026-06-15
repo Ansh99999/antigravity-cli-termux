@@ -5,7 +5,7 @@
 ## 🚀 Quick Start (Termux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/7ui77/antigravity-cli-termux/dev/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/wallentx/antigravity-cli-termux/dev/install.sh | bash
 ```
 
 ![Antigravity CLI Demo](antigravity.gif)
@@ -97,7 +97,7 @@ Antigravity CLI brings the core capabilities of Antigravity 2.0 (multi-step reas
 
 ### Android (Termux)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/7ui77/antigravity-cli-termux/dev/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/wallentx/antigravity-cli-termux/dev/install.sh | bash
 ```
 
 ### macOS / Linux
