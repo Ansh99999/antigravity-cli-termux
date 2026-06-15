@@ -2,8 +2,8 @@
 # Antigravity - Termux Installer
 set -Eeuo pipefail
 
-REPO="${AGY_REPO:-7ui77/antigravity-cli-termux}"
-URL="https://github.com/$REPO/releases/latest/download/antigravity-termux-standalone.tar.gz"
+REPO="${AGY_REPO:-wallentx/antigravity-cli-termux}"
+URL="${AGY_INSTALL_URL:-https://github.com/$REPO/releases/latest/download/antigravity-termux-standalone.tar.gz}"
 
 # ── Environment Detection ─────────────────────────────────────────────────────
 if [[ -z "${TERMUX_VERSION:-}" || -z "${PREFIX:-}" ]]; then
@@ -37,11 +37,19 @@ cleanup() {
   [[ -d "$EXTRACT_DIR" ]] && rm -rf "$EXTRACT_DIR"
   if [[ "${INSTALL_SUCCESS:-0}" -ne 1 ]]; then
     [[ -f "$TMP" ]] && rm -f "$TMP"
-    [[ -n "${AGY_BAK:-}" && -f "$AGY_BAK" ]] && mv -f "$AGY_BAK" "$INSTALL_BIN_DIR/agy" || true
-    [[ -n "${AGY_VA39_BAK:-}" && -f "$AGY_VA39_BAK" ]] && mv -f "$AGY_VA39_BAK" "$INSTALL_BIN_DIR/agy.va39" || true
+    if [[ -n "${AGY_BAK:-}" && -f "$AGY_BAK" ]]; then
+      mv -f "$AGY_BAK" "$INSTALL_BIN_DIR/agy" || true
+    fi
+    if [[ -n "${AGY_VA39_BAK:-}" && -f "$AGY_VA39_BAK" ]]; then
+      mv -f "$AGY_VA39_BAK" "$INSTALL_BIN_DIR/agy.va39" || true
+    fi
   else
-    [[ -n "${AGY_BAK:-}" && -f "$AGY_BAK" ]] && rm -f "$AGY_BAK" || true
-    [[ -n "${AGY_VA39_BAK:-}" && -f "$AGY_VA39_BAK" ]] && rm -f "$AGY_VA39_BAK" || true
+    if [[ -n "${AGY_BAK:-}" && -f "$AGY_BAK" ]]; then
+      rm -f "$AGY_BAK" || true
+    fi
+    if [[ -n "${AGY_VA39_BAK:-}" && -f "$AGY_VA39_BAK" ]]; then
+      rm -f "$AGY_VA39_BAK" || true
+    fi
   fi
 }
 
@@ -83,6 +91,14 @@ die() {
 }
 divider() { printf '%b\n' "${DIM}────────────────────────────────────────${RESET}"; }
 
+terminal_cols() {
+  if [[ -r /dev/tty ]]; then
+    tput cols </dev/tty 2>/dev/null || echo 60
+  else
+    tput cols 2>/dev/null || echo 60
+  fi
+}
+
 spinner() {
   local pid=$1
   local msg=$2
@@ -123,7 +139,7 @@ download_with_progress() {
   fi
 
   local cols
-  cols=$(tput cols </dev/tty 2>/dev/null || echo 60)
+  cols=$(terminal_cols)
 
   local w=$(( cols - 38 ))
   (( w > 60 )) && w=60
@@ -182,7 +198,7 @@ TMP_LOGO=$(mktemp 2>/dev/null || echo "${HOME}/.local/.agy-logo.ans")
 
 if { curl -fLs -H "Cache-Control: no-cache" "https://raw.githubusercontent.com/${REPO}/dev/logo.ans" > "$TMP_LOGO" 2>/dev/null || curl -fLs -H "Cache-Control: no-cache" "https://raw.githubusercontent.com/Brajesh2022/antigravity-cli-termux/dev/logo.ans" > "$TMP_LOGO" 2>/dev/null; } && [[ -s "$TMP_LOGO" ]]; then
 
-  COLS=$(tput cols </dev/tty 2>/dev/null || echo 60)
+  COLS=$(terminal_cols)
 
   awk -v cols="$COLS" -v arch="$(uname -m)" -v bold="${BOLD}${CYAN}" -v dim="${DIM}" -v grn="${GREEN}" -v rst="${RESET}" '
   {
@@ -325,7 +341,7 @@ divider
 info "Installed binaries to: ${BOLD}${INSTALL_BIN_DIR}${RESET}"
 info "Release archive kept at: ${BOLD}${TMP}${RESET}"
 info "Optional verification:"
-info "${BOLD}cd $(dirname "$TMP") && gh attestation verify antigravity-termux-standalone.tar.gz --owner wallentx${RESET}"
+info "${BOLD}cd $(dirname "$TMP") && gh attestation verify antigravity-termux-standalone.tar.gz -R wallentx/antigravity-cli-termux${RESET}"
 printf '\n'
 
 case ":$PATH:" in
@@ -347,4 +363,11 @@ info "Launching Antigravity CLI..."
 export PATH="$INSTALL_BIN_DIR:$PATH"
 INSTALL_SUCCESS=1
 cleanup
+trap - EXIT
+
+if [[ "${AGY_INSTALL_SKIP_LAUNCH:-0}" == "1" ]]; then
+  ok "Launch skipped by AGY_INSTALL_SKIP_LAUNCH"
+  exit 0
+fi
+
 exec "$INSTALL_BIN_DIR/agy"
