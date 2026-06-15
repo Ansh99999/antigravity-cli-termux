@@ -1,3 +1,4 @@
+#include <asm/hwcap.h>
 #include <ctype.h>
 #include <errno.h>
 #include <libgen.h>
@@ -5,7 +6,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/auxv.h>
 #include <unistd.h>
+
+#ifndef HWCAP_ATOMICS
+#define HWCAP_ATOMICS (1 << 8)
+#endif
 
 #ifndef AGY_TERMUX_VERSION
 #define AGY_TERMUX_VERSION "1.0.2"
@@ -153,6 +159,26 @@ static void print_non_termux_message(void) {
                           "  curl -fsSL https://antigravity.google/cli/install.sh | bash\n");
 }
 
+static int resolve_qemu_for_cpu(const char *prefix, char *qemu_path, size_t qemu_path_len,
+                                const char **qemu) {
+    unsigned long hwcap = getauxval(AT_HWCAP);
+
+    *qemu = NULL;
+    if ((hwcap & HWCAP_ATOMICS) != 0) {
+        return 1;
+    }
+
+    int qemu_written = snprintf(qemu_path, qemu_path_len, "%s/bin/qemu-aarch64", prefix);
+    if (qemu_written > 0 && (size_t)qemu_written < qemu_path_len && access(qemu_path, F_OK) == 0) {
+        *qemu = qemu_path;
+        return 1;
+    }
+
+    (void)fprintf(stderr, "[agy-termux] CPU lacks LSE atomics, and qemu-aarch64 was not found.\n");
+    (void)fprintf(stderr, "[agy-termux] You may need to install the qemu-user-aarch64 package.\n");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     char exec_path[PATH_MAX];
     char lib_path[PATH_MAX * 3];
@@ -160,9 +186,13 @@ int main(int argc, char **argv) {
     char dynamic_loader[PATH_MAX];
     char cert_path[PATH_MAX];
     char prefix_path[PATH_MAX];
+    char qemu_path[PATH_MAX];
     const char *prefix = getenv("PREFIX");
     const char *loader = NULL;
     const char *dir = NULL;
+    const char *qemu = NULL;
+    const char *exec_target = NULL;
+    const char *exec_error = NULL;
     char **new_argv = NULL;
     int arg_idx = 0;
     int written = 0;
@@ -170,6 +200,10 @@ int main(int argc, char **argv) {
 
     if (!is_native_termux()) {
         print_non_termux_message();
+        return 1;
+    }
+
+    if (!resolve_qemu_for_cpu(prefix, qemu_path, sizeof(qemu_path), &qemu)) {
         return 1;
     }
     written = snprintf(prefix_path, sizeof(prefix_path), "%s", prefix);
@@ -182,6 +216,8 @@ int main(int argc, char **argv) {
         return 1;
     }
     loader = dynamic_loader;
+    exec_target = loader;
+    exec_error = "[agy-termux] execv failed";
 
     if (access(loader, F_OK) != 0) {
         (void)fprintf(stderr, "[agy-termux] Missing Termux glibc loader: %s\n", loader);
@@ -226,14 +262,20 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // loader + "--library-path" + lib_path + patched_bin + user args + NULL
-    int new_argc = argc + 4;
+    // We allocate enough space for: qemu + loader + "--library-path" + lib_path
+    // + patched_bin + user args + NULL
+    int new_argc = argc + 6;
     new_argv = malloc((size_t)new_argc * sizeof(*new_argv));
     if (!new_argv) {
         return 1;
     }
 
     arg_idx = 0;
+    if (qemu) {
+        new_argv[arg_idx++] = (char *)qemu;
+        exec_target = qemu;
+        exec_error = "[agy-termux] execv (qemu) failed";
+    }
     new_argv[arg_idx++] = (char *)loader;
     new_argv[arg_idx++] = "--library-path";
     new_argv[arg_idx++] = lib_path;
@@ -245,8 +287,8 @@ int main(int argc, char **argv) {
     new_argv[arg_idx] = NULL;
 
     // NOLINTNEXTLINE(clang-analyzer-optin.taint.GenericTaint)
-    if (execv(loader, new_argv) == -1) {
-        perror("[agy-termux] execv failed");
+    if (execv(exec_target, new_argv) == -1) {
+        perror(exec_error);
         free(new_argv);
         return 1;
     }

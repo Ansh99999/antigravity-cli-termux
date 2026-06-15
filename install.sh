@@ -249,10 +249,26 @@ if [[ ! -x "$GLIBC_LOADER" ]]; then
 You may need to install the glibc-repo and glibc packages, then rerun this installer."
 fi
 
+check_lse() {
+  grep -q "atomics" /proc/cpuinfo
+}
+
+check_qemu() {
+  command -v qemu-aarch64 >/dev/null 2>&1
+}
+
 CA_BUNDLE="${TERMUX_PREFIX}/etc/tls/cert.pem"
 if [[ ! -s "$CA_BUNDLE" ]]; then
   die "Missing Termux CA bundle: $CA_BUNDLE
 You may need to install the ca-certificates package, then rerun this installer."
+fi
+
+if ! check_lse; then
+  if ! check_qemu; then
+    die "This CPU does not support LSE atomics, and qemu-aarch64 was not found.
+You may need to install the qemu-user-aarch64 package, then rerun this installer."
+  fi
+  ok "LSE Emulation: QEMU enabled"
 fi
 
 ok "Environment: ${ENV_TYPE} (aarch64)"
