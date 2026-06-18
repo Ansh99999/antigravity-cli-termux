@@ -32,7 +32,7 @@ static int agy_is_valid_release_tag(const char *tag) {
 }
 
 // Helper to query your fork's latest release version via GitHub API and update in-place
-void check_and_perform_update(const char *dir) {
+void check_and_perform_update(const char *dir, int auto_update) {
     printf("[agy-termux] Querying latest release from wallentx/antigravity-cli-termux...\n");
 
     // Formulate a secure curl command to query the GitHub Releases API
@@ -81,15 +81,25 @@ void check_and_perform_update(const char *dir) {
 
     if (strcmp(clean_latest, clean_current) != 0) {
         printf("\n[agy-termux] A new update (v%s) is available!\n", clean_latest);
-        printf("[agy-termux] Would you like to update now? [y/N]: ");
-        (void)fflush(stdout);
 
-        char response = 'n';
-        char response_line[8] = {0};
-        if (fgets(response_line, sizeof(response_line), stdin) != NULL) {
-            response = response_line[0];
+        int proceed = auto_update;
+        if (!proceed) {
+            printf("[agy-termux] Would you like to update now? [y/N]: ");
+            (void)fflush(stdout);
+
+            char response = 'n';
+            char response_line[8] = {0};
+            if (fgets(response_line, sizeof(response_line), stdin) != NULL) {
+                response = response_line[0];
+            }
+            if (response == 'y' || response == 'Y') {
+                proceed = 1;
+            }
+        } else {
+            printf("[agy-termux] Proceeding with automatic update (non-interactive)...\n");
         }
-        if (response == 'y' || response == 'Y') {
+
+        if (proceed) {
             printf("\n[agy-termux] Downloading and applying standalone update...\n");
 
             // Runs a subshell command to download into a staging directory, then replace only
@@ -246,7 +256,18 @@ int main(int argc, char **argv) {
     dir = dirname(exec_path);
 
     if (argc >= 2 && strcmp(argv[1], "update") == 0) {
-        check_and_perform_update(dir);
+        int auto_update = 0;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "-y") == 0 || strcmp(argv[i], "--yes") == 0 || strcmp(argv[i], "--auto") == 0) {
+                auto_update = 1;
+                break;
+            }
+        }
+        const char *env_auto = getenv("AGY_AUTO_UPDATE");
+        if (env_auto && (strcmp(env_auto, "1") == 0 || strcmp(env_auto, "true") == 0)) {
+            auto_update = 1;
+        }
+        check_and_perform_update(dir, auto_update);
         return 0;
     }
 
