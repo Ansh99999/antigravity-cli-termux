@@ -2,6 +2,54 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+## 1.0.11
+
+- Added `ctrl+c` as an exit and interrupt key: the first press cancels active agent operations (like streaming responses), and a double-press triggers the exit flow. Also added a dynamic exit hint in the status line.
+- Fixed `ctrl+d` behavior to act as a forward-delete when the input prompt contains text, only triggering the exit flow when the prompt is empty.
+- Improved `/resume` loading performance by implementing a persistent metadata cache and parallel loader, eliminating severe latency with large conversation histories and preventing background loading log spam.
+- Added support for authenticating via Application Default Credentials (ADC) by setting the `USE_ADC` environment variable, enabling seamless authentication in environments with pre-configured Google Cloud credentials. e.g. `USE_ADC=1 agy`.
+- Added an expanded AltScreen view for tool confirmations (accessible via `ctrl+g`), allowing users to view and edit the full command and associated permissions in a dedicated full-screen view, replacing the inline edit (`e`) key.
+- Added the `AGY_CLI_CMD_OUTPUT_PERCENTAGE` environment variable, allowing users to customize the maximum height of command outputs in the TUI as a percentage of the terminal height.
+- Added strict key name validation to the keybindings system to reject invalid key names (like typos) and suggest canonical alternatives, preventing "dead keys" from being registered.
+- Added a validation warning when `ctrl+c` is mapped to a non-default action, clarifying that the system always intercepts `ctrl+c` to interrupt active operations or exit, and providing instructions on how to resolve the warning.
+- Improved command output rendering by making the output height dynamic, improving the readability of commands like `/keybindings`.
+- Improved text rendering with ANSI-aware word wrapping at word boundaries and prevented URLs containing hyphens from being incorrectly split across lines.
+- Improved the `/resume` experience: added support for pasting clipboard text into the search filter and rename fields, upgraded the rename input to a multiline editor to prevent long titles from being hidden, and fixed a bug where the navigation cursor could disappear.
+- Improved keybinding validation warning messages to use user-facing names (e.g., `cli.escape`) instead of internal representation names.
+- Improved startup behavior by only creating the `keybindings.json` configuration file when the user explicitly runs the `/keybindings` customization command, rather than automatically generating it on every startup.
+- Improved keybinding error presentation by replacing the persistent error footer with transient error alerts, freeing up valuable terminal space.
+- Fixed the `ctrl+c` exit safety valve to ensure it always works as an interrupt or exit key, regardless of how it is mapped in the user's custom keybindings configuration.
+- Fixed VCS commit tree rendering to reserve the `@` marker exclusively for the actual current commit in the VCS history rather than the synthetic "Working Copy" entry, helping users easily identify the working copy parent.
+- Fixed authentication error handling to gracefully handle unsigned-in states by returning an empty configuration and suppressing noisy error logs.
+
+## 1.0.10
+
+- Improved compatibility with a broader set of ARM64 devices (e.g. raspberry pi 4b).
+- Added `antigravity_guide` builtin skill to provide instant, in-context reference guides for the Antigravity 2.0, CLI, IDE, and SDK.
+- Improved commit history navigation: scrolling now immediately loads and displays changed files and diffs.
+- Improved Git integration by enabling ASCII node graphs (`git log --graph`) for visual parity with hg/jj.
+- Improved commit hash matching to seamlessly resolve short (6-char) to long (64-char) hashes via prefix comparison.
+- Added alert message type for system errors/warnings, separating them from standard command output.
+- Added the CLI log file path to the `/help` menu for easy troubleshooting.
+- Improved markdown rendering by upgrading `glamour` to v2.0.1 for cleaner headings and block padding.
+- Improved authentication to automatically launch browser sign-in via `rundll32`.
+- Fixed a bug where "ask" permissions were dropped during settings updates, ensuring `settings.json` preservation.
+- Fixed permission engine matching bugs by escaping regex metacharacters (like `$` or `.`) in saved rules, preventing infinite prompt loops.
+- Fixed environment flag parsing to prevent ignored disablement flags.
+- Fixed bash mode argument escaping (preventing swallowed stdout) and defaulted shell resolution to PowerShell.
+
+## 1.0.9
+
+- Added submodule support for plugins installation. External plugin installation now automatically resolves and initializes Git submodules.
+- Optimized customizations permissions: Automatically grants read-only access to the builtin customizations directory, eliminating redundant permission prompts on startup.
+- Improved glamour parser error handling (like nested checkboxes inside list emphasis) and preventing it from crashing the TUI, falling back to raw text with a warning banner.
+- Updated bubbletea to v2.0.7: Resolves a potential TUI panic when terminal input is unavailable, fixes a data race in mouse handling within the Cursed Renderer, and corrects mouse release behavior under the Kitty Keyboard protocol.
+- Hardened command execution permission checks by enforcing strict exact-match verification for PowerShell scripts, complex shell redirections ( `>` , `2>&1` ), and unparseable strings to prevent sandbox escapes.
+- Hardened sandbox execution by adding `.git` to the core list of dangerous paths, preventing unauthorized or destructive repository modifications.
+- Fixed a bug where allowlisted terminal commands with quoted arguments (e.g., `python -c "print(1)"`) would silently fail to match at runtime due to flawed whitespace tokenization.
+- Fixed a bug in headless print mode resumption (`--conversation`/`-c` `-p ...`) where the CLI would dump the entire historical conversation transcript instead of only printing the newly generated response.
+- Fixed a CPU compatibility issue on ARM64 devices without AES hardware support.
+
 ## 1.0.8
 
 - Added support for capturing slash command history, allowing users to use the up arrow to replay previously entered slash commands.
