@@ -8,14 +8,21 @@ on:
 permissions: read-all
 
 jobs:
-  c-format-and-tidy:
-    name: C Format and Tidy
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
+  changes:
+    name: Detect Relevant Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     defaults:
       run:
         shell: bash
+
+    outputs:
+      c_format: ${{ steps.c_format.outputs.should_run }}
+      c_static: ${{ steps.c_static.outputs.should_run }}
+      termux_compile: ${{ steps.termux_compile.outputs.should_run }}
+      build_package: ${{ steps.build_package.outputs.should_run }}
+      installer_smoke: ${{ steps.installer_smoke.outputs.should_run }}
 
     steps:
       - name: Checkout Code
@@ -30,286 +37,228 @@ jobs:
         with:
           checkout: false
 
-      - name: Decide Whether To Run
-        id: changed
+      - name: C Format and Tidy Paths
+        id: c_format
         run: .github/scripts/ci-should-run.py c-format
 
-      - name: Skip C Format and Tidy
-        if: steps.changed.outputs.should_run != 'true'
-        env:
-          SKIP_REASON: ${{ steps.changed.outputs.reason }}
-        run: echo "$SKIP_REASON"
+      - name: C Static Analysis Paths
+        id: c_static
+        run: .github/scripts/ci-should-run.py c-static
 
-      - name: Run clang-format and clang-tidy in Termux
-        if: steps.changed.outputs.should_run == 'true'
-        run: |
-          .github/scripts/run-termux-pacman.sh clang <<'TERMUX_SCRIPT'
-          set -Eeuo pipefail
+      - name: Strict Termux Clang Compile Paths
+        id: termux_compile
+        run: .github/scripts/ci-should-run.py termux-compile
 
-          mapfile -t c_files < <(find lib -type f \( -name '*.c' -o -name '*.h' \) | sort)
-          if (( ${#c_files[@]} == 0 )); then
-            echo "No C source files found."
-            exit 0
-          fi
+      - name: Termux Build and Package Paths
+        id: build_package
+        run: .github/scripts/ci-should-run.py build-package
 
-          clang-format --dry-run --Werror "${c_files[@]}"
+      - name: Termux Installer Smoke Test Paths
+        id: installer_smoke
+        run: .github/scripts/ci-should-run.py installer-smoke
 
-          for source in "${c_files[@]}"; do
-            [[ "$source" == *.c ]] || continue
-            clang-tidy "$source" -- -std=gnu11
-          done
-          TERMUX_SCRIPT
+  c-format-and-tidy:
+    name: C Format and Tidy
+    needs: changes
+    if: ${{ needs.changes.outputs.c_format == 'true' }}
+    uses: wallentx/gh-actions/.github/workflows/termux-run.yml@main
+    with:
+      packages: |
+        clang
+      exclude-paths: |
+        .git
+        ./.git
+        bin
+        ./bin
+        staging
+        ./staging
+      commands: |
+        set -Eeuo pipefail
+
+        mapfile -t c_files < <(find lib -type f \( -name '*.c' -o -name '*.h' \) | sort)
+        if (( ${#c_files[@]} == 0 )); then
+          echo "No C source files found."
+          exit 0
+        fi
+
+        clang-format --dry-run --Werror "${c_files[@]}"
+
+        for source in "${c_files[@]}"; do
+          [[ "$source" == *.c ]] || continue
+          clang-tidy "$source" -- -std=gnu11
+        done
 
   c-static-analysis:
     name: C Static Analysis
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
+    needs: changes
+    if: ${{ needs.changes.outputs.c_static == 'true' }}
+    uses: wallentx/gh-actions/.github/workflows/termux-run.yml@main
+    with:
+      packages: |
+        cppcheck
+      exclude-paths: |
+        .git
+        ./.git
+        bin
+        ./bin
+        staging
+        ./staging
+      commands: |
+        set -Eeuo pipefail
 
-    defaults:
-      run:
-        shell: bash
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: 🧰 Actions Toolbox
-        uses: wallentx/gh-actions/composite/actions-toolbox@main
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          checkout: false
-
-      - name: Decide Whether To Run
-        id: changed
-        run: .github/scripts/ci-should-run.py c-static
-
-      - name: Skip C Static Analysis
-        if: steps.changed.outputs.should_run != 'true'
-        env:
-          SKIP_REASON: ${{ steps.changed.outputs.reason }}
-        run: echo "$SKIP_REASON"
-
-      - name: Run cppcheck in Termux
-        if: steps.changed.outputs.should_run == 'true'
-        run: |
-          .github/scripts/run-termux-pacman.sh cppcheck <<'TERMUX_SCRIPT'
-          set -Eeuo pipefail
-
-          echo "Running cppcheck static analysis on C source files..."
-          cppcheck \
-            --enable=warning,performance,portability \
-            --suppress=missingIncludeSystem \
-            --error-exitcode=1 \
-            lib/
-          TERMUX_SCRIPT
+        echo "Running cppcheck static analysis on C source files..."
+        cppcheck \
+          --enable=warning,performance,portability \
+          --suppress=missingIncludeSystem \
+          --error-exitcode=1 \
+          lib/
 
   strict-termux-clang:
     name: Strict Termux Clang Compile
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
+    needs: changes
+    if: ${{ needs.changes.outputs.termux_compile == 'true' }}
+    uses: wallentx/gh-actions/.github/workflows/termux-run.yml@main
+    with:
+      packages: |
+        clang
+      exclude-paths: |
+        .git
+        ./.git
+        bin
+        ./bin
+        staging
+        ./staging
+      commands: |
+        set -Eeuo pipefail
 
-    defaults:
-      run:
-        shell: bash
+        echo "Verifying standalone C compilation under strict Termux Clang warning flags..."
+        mkdir -p bin
 
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+        strict_flags=(
+          -std=gnu11
+          -Wall
+          -Wextra
+          -Wpedantic
+          -Wshadow
+          -Wformat=2
+          -Wundef
+          -Wcast-align
+          -Werror
+          -O2
+        )
 
-      - name: 🧰 Actions Toolbox
-        uses: wallentx/gh-actions/composite/actions-toolbox@main
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          checkout: false
+        clang "${strict_flags[@]}" -o "bin/agy-clang" lib/agy_helper.c
 
-      - name: Decide Whether To Run
-        id: changed
-        run: .github/scripts/ci-should-run.py termux-compile
+        for source in lib/*.c; do
+          [[ -e "$source" ]] || continue
+          [[ "$source" == "lib/agy_helper.c" ]] && continue
 
-      - name: Skip Strict Termux Clang Compile
-        if: steps.changed.outputs.should_run != 'true'
-        env:
-          SKIP_REASON: ${{ steps.changed.outputs.reason }}
-        run: echo "$SKIP_REASON"
-
-      - name: Strict C Compiler Diagnostic Check
-        if: steps.changed.outputs.should_run == 'true'
-        run: |
-          .github/scripts/run-termux-pacman.sh clang <<'TERMUX_SCRIPT'
-          set -Eeuo pipefail
-
-          echo "Verifying standalone C compilation under strict Termux Clang warning flags..."
-          mkdir -p bin
-
-          strict_flags=(
-            -std=gnu11
-            -Wall
-            -Wextra
-            -Wpedantic
-            -Wshadow
-            -Wformat=2
-            -Wundef
-            -Wcast-align
-            -Werror
-            -O2
-          )
-
-          clang "${strict_flags[@]}" -o "bin/agy-clang" lib/agy_helper.c
-
-          for source in lib/*.c; do
-            [[ -e "$source" ]] || continue
-            [[ "$source" == "lib/agy_helper.c" ]] && continue
-
-            base_name=$(basename "$source" .c)
-            echo "Auxiliary C library detected: $source. Verifying shared-object compilation with clang..."
-            clang "${strict_flags[@]}" -fPIC -shared -o "lib/lib${base_name}-clang.so" "$source" -ldl
-          done
-          TERMUX_SCRIPT
+          base_name=$(basename "$source" .c)
+          echo "Auxiliary C library detected: $source. Verifying shared-object compilation with clang..."
+          clang "${strict_flags[@]}" -fPIC -shared -o "lib/lib${base_name}-clang.so" "$source" -ldl
+        done
 
   build-and-package:
     name: Termux Build and Package
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    needs: changes
+    if: ${{ needs.changes.outputs.build_package == 'true' }}
+    uses: wallentx/gh-actions/.github/workflows/termux-run.yml@main
+    with:
+      packages: |
+        ca-certificates
+        curl
+        jq
+        tar
+        python
+        clang
+        glibc
+        glibc-runner
+      exclude-paths: |
+        .git
+        ./.git
+        bin
+        ./bin
+        staging
+        ./staging
+      sync-back-paths: |
+        antigravity-termux-standalone.tar.gz
+      upload-artifact-name: antigravity-termux-standalone-preview
+      commands: |
+        set -Eeuo pipefail
 
-    defaults:
-      run:
-        shell: bash
+        echo "Running build.sh builder integration test in Termux..."
+        ./build.sh
 
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+        echo "Packaging standalone release archive..."
+        tar -czf antigravity-termux-standalone.tar.gz -C bin agy agy.va39
 
-      - name: 🧰 Actions Toolbox
-        uses: wallentx/gh-actions/composite/actions-toolbox@main
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          checkout: false
+        if [[ ! -f antigravity-termux-standalone.tar.gz ]]; then
+          echo "Error: Release archive antigravity-termux-standalone.tar.gz was not generated." >&2
+          exit 1
+        fi
 
-      - name: Decide Whether To Run
-        id: changed
-        run: .github/scripts/ci-should-run.py build-package
+        echo "Verifying archive contents..."
+        tar -tf antigravity-termux-standalone.tar.gz
 
-      - name: Skip Termux Build and Package
-        if: steps.changed.outputs.should_run != 'true'
-        env:
-          SKIP_REASON: ${{ steps.changed.outputs.reason }}
-        run: echo "$SKIP_REASON"
+        tar -tzf antigravity-termux-standalone.tar.gz | grep -qE '^agy$' || (echo "Error: Missing agy in release archive!" && exit 1)
+        tar -tzf antigravity-termux-standalone.tar.gz | grep -qE '^agy\.va39$' || (echo "Error: Missing agy.va39 in release archive!" && exit 1)
 
-      - name: End-to-End Termux Build Integration Test
-        if: steps.changed.outputs.should_run == 'true'
-        run: |
-          TERMUX_SYNC_BACK=antigravity-termux-standalone.tar.gz \
-            .github/scripts/run-termux-pacman.sh ca-certificates curl jq tar python clang glibc glibc-runner <<'TERMUX_SCRIPT'
-          set -Eeuo pipefail
-
-          echo "Running build.sh builder integration test in Termux..."
-          ./build.sh
-
-          echo "Packaging standalone release archive..."
-          tar -czf antigravity-termux-standalone.tar.gz -C bin agy agy.va39
-
-          if [[ ! -f antigravity-termux-standalone.tar.gz ]]; then
-            echo "Error: Release archive antigravity-termux-standalone.tar.gz was not generated." >&2
-            exit 1
-          fi
-
-          echo "Verifying archive contents..."
-          tar -tf antigravity-termux-standalone.tar.gz
-
-          tar -tzf antigravity-termux-standalone.tar.gz | grep -qE '^agy$' || (echo "Error: Missing agy in release archive!" && exit 1)
-          tar -tzf antigravity-termux-standalone.tar.gz | grep -qE '^agy\.va39$' || (echo "Error: Missing agy.va39 in release archive!" && exit 1)
-
-          echo "Archive validation passed successfully."
-          TERMUX_SCRIPT
-
-      - name: Upload Standalone Tarball Preview
-        if: steps.changed.outputs.should_run == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: antigravity-termux-standalone-preview
-          path: antigravity-termux-standalone.tar.gz
-          if-no-files-found: error
+        echo "Archive validation passed successfully."
 
   installer-smoke:
     name: Termux Installer Smoke Test
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
+    needs: changes
+    if: ${{ needs.changes.outputs.installer_smoke == 'true' }}
+    uses: wallentx/gh-actions/.github/workflows/termux-run.yml@main
+    with:
+      packages: |
+        ca-certificates
+        curl
+        tar
+        glibc
+        glibc-runner
+      exclude-paths: |
+        .git
+        ./.git
+        bin
+        ./bin
+        staging
+        ./staging
+      commands: |
+        set -Eeuo pipefail
 
-    defaults:
-      run:
-        shell: bash
+        export TERMUX_VERSION="${TERMUX_VERSION:-ci}"
 
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+        fixture="$PREFIX/tmp/agy-installer-fixture"
+        payload="$fixture/payload"
+        archive="$fixture/antigravity-termux-standalone.tar.gz"
+        rm -rf "$fixture"
+        mkdir -p "$payload"
 
-      - name: 🧰 Actions Toolbox
-        uses: wallentx/gh-actions/composite/actions-toolbox@main
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          checkout: false
+        cat > "$payload/agy" <<'FIXTURE'
+        #!/usr/bin/env sh
+        case "${1:-}" in
+          --version)
+            echo "v0.0.0-ci"
+            ;;
+          --help)
+            echo "agy fixture help"
+            ;;
+          *)
+            echo "agy fixture"
+            ;;
+        esac
+        FIXTURE
+        chmod 0755 "$payload/agy"
+        cp "$payload/agy" "$payload/agy.va39"
 
-      - name: Decide Whether To Run
-        id: changed
-        run: .github/scripts/ci-should-run.py installer-smoke
+        tar -czf "$archive" -C "$payload" agy agy.va39
 
-      - name: Skip Termux Installer Smoke Test
-        if: steps.changed.outputs.should_run != 'true'
-        env:
-          SKIP_REASON: ${{ steps.changed.outputs.reason }}
-        run: echo "$SKIP_REASON"
+        AGY_INSTALL_URL="file://$archive" \
+        AGY_INSTALL_SKIP_LAUNCH=1 \
+          bash ./install.sh
 
-      - name: Run installer in clean Termux
-        if: steps.changed.outputs.should_run == 'true'
-        run: |
-          .github/scripts/run-termux-pacman.sh ca-certificates curl tar glibc glibc-runner <<'TERMUX_SCRIPT'
-          set -Eeuo pipefail
-
-          export TERMUX_VERSION="${TERMUX_VERSION:-ci}"
-
-          fixture="$PREFIX/tmp/agy-installer-fixture"
-          payload="$fixture/payload"
-          archive="$fixture/antigravity-termux-standalone.tar.gz"
-          rm -rf "$fixture"
-          mkdir -p "$payload"
-
-          cat > "$payload/agy" <<'FIXTURE'
-          #!/usr/bin/env sh
-          case "${1:-}" in
-            --version)
-              echo "v0.0.0-ci"
-              ;;
-            --help)
-              echo "agy fixture help"
-              ;;
-            *)
-              echo "agy fixture"
-              ;;
-          esac
-          FIXTURE
-          chmod 0755 "$payload/agy"
-          cp "$payload/agy" "$payload/agy.va39"
-
-          tar -czf "$archive" -C "$payload" agy agy.va39
-
-          AGY_INSTALL_URL="file://$archive" \
-          AGY_INSTALL_SKIP_LAUNCH=1 \
-            bash ./install.sh
-
-          test -x "$PREFIX/bin/agy"
-          test -x "$PREFIX/bin/agy.va39"
-          "$PREFIX/bin/agy" --version | grep -qx "v0.0.0-ci"
-          "$PREFIX/bin/agy" --help | grep -q "agy fixture help"
-          TERMUX_SCRIPT
+        test -x "$PREFIX/bin/agy"
+        test -x "$PREFIX/bin/agy.va39"
+        "$PREFIX/bin/agy" --version | grep -qx "v0.0.0-ci"
+        "$PREFIX/bin/agy" --help | grep -q "agy fixture help"
