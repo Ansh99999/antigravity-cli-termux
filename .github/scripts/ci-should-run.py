@@ -11,7 +11,6 @@ from pathlib import PurePosixPath
 
 ALL_TERMUX_HELPERS = {
     ".github/scripts/ci-should-run.py",
-    ".github/scripts/run-termux-pacman.sh",
 }
 
 
