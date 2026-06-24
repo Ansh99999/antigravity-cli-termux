@@ -31,6 +31,39 @@ static int agy_is_valid_release_tag(const char *tag) {
     return 1;
 }
 
+static void print_update_usage(void) {
+    printf("Usage: agy update [options]\n\n"
+           "Options:\n"
+           "  -y, --yes, --auto  Apply updates without prompting\n"
+           "  -h, --help         Show this help message\n\n"
+           "Environment:\n"
+           "  AGY_AUTO_UPDATE=1  Apply updates without prompting\n");
+}
+
+static int should_perform_update(int auto_update) {
+    if (auto_update) {
+        printf("[agy-termux] Proceeding with automatic update (non-interactive)...\n");
+        return 1;
+    }
+
+    if (!isatty(STDIN_FILENO)) {
+        printf("[agy-termux] Error: standard input is not a TTY and auto-update is not enabled.\n");
+        printf("[agy-termux] Run `agy update -y` or set AGY_AUTO_UPDATE=1 for non-interactive "
+               "updates.\n");
+        return 0;
+    }
+
+    printf("[agy-termux] Would you like to update now? [y/N]: ");
+    (void)fflush(stdout);
+
+    char response = 'n';
+    char response_line[8] = {0};
+    if (fgets(response_line, sizeof(response_line), stdin) != NULL) {
+        response = response_line[0];
+    }
+    return response == 'y' || response == 'Y';
+}
+
 // Helper to query your fork's latest release version via GitHub API and update in-place
 void check_and_perform_update(const char *dir, int auto_update) {
     printf("[agy-termux] Querying latest release from wallentx/antigravity-cli-termux...\n");
@@ -82,24 +115,7 @@ void check_and_perform_update(const char *dir, int auto_update) {
     if (strcmp(clean_latest, clean_current) != 0) {
         printf("\n[agy-termux] A new update (v%s) is available!\n", clean_latest);
 
-        int proceed = auto_update;
-        if (!proceed) {
-            printf("[agy-termux] Would you like to update now? [y/N]: ");
-            (void)fflush(stdout);
-
-            char response = 'n';
-            char response_line[8] = {0};
-            if (fgets(response_line, sizeof(response_line), stdin) != NULL) {
-                response = response_line[0];
-            }
-            if (response == 'y' || response == 'Y') {
-                proceed = 1;
-            }
-        } else {
-            printf("[agy-termux] Proceeding with automatic update (non-interactive)...\n");
-        }
-
-        if (proceed) {
+        if (should_perform_update(auto_update)) {
             printf("\n[agy-termux] Downloading and applying standalone update...\n");
 
             // Runs a subshell command to download into a staging directory, then replace only
@@ -136,6 +152,37 @@ void check_and_perform_update(const char *dir, int auto_update) {
     } else {
         printf("[agy-termux] You are already up to date with the latest standalone release.\n");
     }
+}
+
+static int is_update_help_flag(const char *arg) {
+    return strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0;
+}
+
+static int is_update_auto_flag(const char *arg) {
+    return strcmp(arg, "-y") == 0 || strcmp(arg, "--yes") == 0 || strcmp(arg, "--auto") == 0;
+}
+
+static int env_requests_auto_update(void) {
+    const char *env_auto = getenv("AGY_AUTO_UPDATE");
+
+    return env_auto != NULL && (strcmp(env_auto, "1") == 0 || strcmp(env_auto, "true") == 0);
+}
+
+static int handle_update_command(const char *dir, int argc, char **argv) {
+    int auto_update = env_requests_auto_update();
+
+    for (int i = 2; i < argc; i++) {
+        if (is_update_help_flag(argv[i])) {
+            print_update_usage();
+            return 0;
+        }
+        if (is_update_auto_flag(argv[i])) {
+            auto_update = 1;
+        }
+    }
+
+    check_and_perform_update(dir, auto_update);
+    return 0;
 }
 
 static int is_native_termux(void) {
@@ -256,19 +303,7 @@ int main(int argc, char **argv) {
     dir = dirname(exec_path);
 
     if (argc >= 2 && strcmp(argv[1], "update") == 0) {
-        int auto_update = 0;
-        for (int i = 2; i < argc; i++) {
-            if (strcmp(argv[i], "-y") == 0 || strcmp(argv[i], "--yes") == 0 || strcmp(argv[i], "--auto") == 0) {
-                auto_update = 1;
-                break;
-            }
-        }
-        const char *env_auto = getenv("AGY_AUTO_UPDATE");
-        if (env_auto && (strcmp(env_auto, "1") == 0 || strcmp(env_auto, "true") == 0)) {
-            auto_update = 1;
-        }
-        check_and_perform_update(dir, auto_update);
-        return 0;
+        return handle_update_command(dir, argc, argv);
     }
 
     // Construct relocatable library search path for native Termux glibc.
