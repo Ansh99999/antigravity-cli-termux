@@ -20,6 +20,7 @@ jobs:
         ca-certificates
         glibc
         glibc-runner
+        resolv-conf
         tar
       copy-paths: |
         artifact

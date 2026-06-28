@@ -173,6 +173,7 @@ jobs:
         clang
         glibc
         glibc-runner
+        resolv-conf
       exclude-paths: |
         .git
         ./.git
@@ -217,6 +218,7 @@ jobs:
         tar
         glibc
         glibc-runner
+        resolv-conf
       exclude-paths: |
         .git
         ./.git
