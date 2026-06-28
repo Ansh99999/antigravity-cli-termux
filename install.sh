@@ -263,6 +263,13 @@ if [[ ! -s "$CA_BUNDLE" ]]; then
 You may need to install the ca-certificates package, then rerun this installer."
 fi
 
+RESOLV_CONF="${TERMUX_PREFIX}/etc/resolv.conf"
+if [[ ! -r "$RESOLV_CONF" ]]; then
+  die "Missing Termux resolver configuration: $RESOLV_CONF
+You may need to install the resolv-conf package, then rerun this installer:
+  pkg install resolv-conf"
+fi
+
 if ! check_lse; then
   if ! check_qemu; then
     die "This CPU does not support LSE atomics, and qemu-aarch64 was not found.

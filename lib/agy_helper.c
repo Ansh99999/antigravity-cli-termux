@@ -53,15 +53,17 @@ static int should_perform_update(int auto_update) {
         return 0;
     }
 
-    printf("[agy-termux] Would you like to update now? [y/N]: ");
+    printf("[agy-termux] Would you like to update now? [Y/n]: ");
     (void)fflush(stdout);
 
-    char response = 'n';
     char response_line[8] = {0};
-    if (fgets(response_line, sizeof(response_line), stdin) != NULL) {
-        response = response_line[0];
+    if (fgets(response_line, sizeof(response_line), stdin) == NULL) {
+        return 0;
     }
-    return response == 'y' || response == 'Y';
+    if (response_line[0] == '\n' || response_line[0] == '\0') {
+        return 1;
+    }
+    return response_line[0] == 'y' || response_line[0] == 'Y';
 }
 
 // Helper to query your fork's latest release version via GitHub API and update in-place
@@ -216,6 +218,25 @@ static void print_non_termux_message(void) {
                           "  curl -fsSL https://antigravity.google/cli/install.sh | bash\n");
 }
 
+static int require_resolver_config(const char *prefix) {
+    char resolv_path[PATH_MAX];
+    int written = snprintf(resolv_path, sizeof(resolv_path), "%s/etc/resolv.conf", prefix);
+    if (written < 0 || written >= (int)sizeof(resolv_path)) {
+        return 0;
+    }
+
+    if (access(resolv_path, R_OK) != 0) {
+        (void)fprintf(stderr, "[agy-termux] Missing resolver configuration: %s\n", resolv_path);
+        (void)fprintf(stderr, "[agy-termux] Install it with: pkg install resolv-conf\n");
+        (void)fprintf(stderr,
+                      "[agy-termux] Without this file, login and OAuth network requests may "
+                      "fail.\n");
+        return 0;
+    }
+
+    return 1;
+}
+
 static int resolve_qemu_for_cpu(const char *prefix, char *qemu_path, size_t qemu_path_len,
                                 const char **qemu) {
     unsigned long hwcap = getauxval(AT_HWCAP);
@@ -304,6 +325,10 @@ int main(int argc, char **argv) {
 
     if (argc >= 2 && strcmp(argv[1], "update") == 0) {
         return handle_update_command(dir, argc, argv);
+    }
+
+    if (!require_resolver_config(prefix_path)) {
+        return 1;
     }
 
     // Construct relocatable library search path for native Termux glibc.
