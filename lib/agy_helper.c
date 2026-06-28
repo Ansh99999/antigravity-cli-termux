@@ -53,17 +53,32 @@ static int should_perform_update(int auto_update) {
         return 0;
     }
 
-    printf("[agy-termux] Would you like to update now? [Y/n]: ");
-    (void)fflush(stdout);
+    for (;;) {
+        printf("[agy-termux] Would you like to update now? [Y/n]: ");
+        (void)fflush(stdout);
 
-    char response_line[8] = {0};
-    if (fgets(response_line, sizeof(response_line), stdin) == NULL) {
-        return 0;
+        char response_line[64] = {0};
+        if (fgets(response_line, sizeof(response_line), stdin) == NULL) {
+            return 0;
+        }
+        if (strchr(response_line, '\n') == NULL) {
+            int ch = 0;
+            while ((ch = getchar()) != '\n' && ch != EOF) {
+            }
+        }
+
+        if (response_line[0] == '\n' || response_line[0] == '\0') {
+            return 1;
+        }
+        if (response_line[0] == 'y' || response_line[0] == 'Y') {
+            return 1;
+        }
+        if (response_line[0] == 'n' || response_line[0] == 'N') {
+            return 0;
+        }
+
+        printf("[agy-termux] Invalid selection. Enter y or n.\n");
     }
-    if (response_line[0] == '\n' || response_line[0] == '\0') {
-        return 1;
-    }
-    return response_line[0] == 'y' || response_line[0] == 'Y';
 }
 
 // Helper to query your fork's latest release version via GitHub API and update in-place
@@ -162,6 +177,20 @@ static int is_update_help_flag(const char *arg) {
 
 static int is_update_auto_flag(const char *arg) {
     return strcmp(arg, "-y") == 0 || strcmp(arg, "--yes") == 0 || strcmp(arg, "--auto") == 0;
+}
+
+static int update_command_requests_help(int argc, char **argv) {
+    for (int i = 2; i < argc; i++) {
+        if (is_update_help_flag(argv[i])) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int is_update_command(int argc, char **argv) {
+    return argc >= 2 && strcmp(argv[1], "update") == 0;
 }
 
 static int env_requests_auto_update(void) {
@@ -323,7 +352,13 @@ int main(int argc, char **argv) {
     exec_path[read_len] = '\0';
     dir = dirname(exec_path);
 
-    if (argc >= 2 && strcmp(argv[1], "update") == 0) {
+    if (is_update_command(argc, argv)) {
+        if (update_command_requests_help(argc, argv)) {
+            return handle_update_command(dir, argc, argv);
+        }
+        if (!require_resolver_config(prefix_path)) {
+            return 1;
+        }
         return handle_update_command(dir, argc, argv);
     }
 
