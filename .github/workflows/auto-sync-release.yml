@@ -64,7 +64,6 @@ jobs:
 
           echo "Fetching origin/dev..."
           git fetch origin dev
-          expected_dev="$(git rev-parse origin/dev)"
 
           echo "Fetching upstream/main..."
           git fetch upstream main
@@ -76,8 +75,8 @@ jobs:
           echo "Before sync: dev is ${behind} commits behind and ${ahead} commits ahead of upstream/main."
 
           if [[ "$behind" != "0" ]]; then
-            echo "Rebasing dev onto upstream/main..."
-            git rebase upstream/main
+            echo "Merging upstream/main into dev..."
+            git merge --no-edit upstream/main
           else
             echo "dev is already caught up with upstream/main."
           fi
@@ -86,14 +85,14 @@ jobs:
           echo "After sync: dev is ${behind_after} commits behind and ${ahead_after} commits ahead of upstream/main."
 
           if [[ "$behind_after" != "0" ]]; then
-            echo "dev is still behind upstream/main after rebase." >&2
+            echo "dev is still behind upstream/main after merge." >&2
             exit 1
           fi
 
           if [[ "$behind" != "0" ]]; then
             if [[ "$DRY_RUN" != "true" ]]; then
               echo "Pushing synced dev branch to origin..."
-              git push --force-with-lease="refs/heads/dev:${expected_dev}" origin HEAD:dev
+              git push origin HEAD:dev
             else
               echo "Dry run: skipping push to origin."
             fi
