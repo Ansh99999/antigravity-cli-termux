@@ -92,11 +92,12 @@ die() {
 divider() { printf '%b\n' "${DIM}────────────────────────────────────────${RESET}"; }
 
 terminal_cols() {
-  if [[ -r /dev/tty ]]; then
-    tput cols </dev/tty 2>/dev/null || echo 60
-  else
-    tput cols 2>/dev/null || echo 60
+  local cols
+  if [[ -t 1 ]] && cols=$(tput cols 2>/dev/null) && [[ "$cols" =~ ^[0-9]+$ ]] && (( cols > 0 )); then
+    echo "$cols"
+    return
   fi
+  echo 60
 }
 
 spinner() {

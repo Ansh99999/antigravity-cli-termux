@@ -15,6 +15,9 @@ on:
 jobs:
   check-and-build:
     runs-on: ubuntu-latest
+    outputs:
+      build_needed: ${{ steps.check_version.outputs.build_needed }}
+      version: ${{ steps.check_version.outputs.version }}
 
     defaults:
       run:
@@ -37,7 +40,7 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -48,23 +51,16 @@ jobs:
         with:
           checkout: false
 
-      - name: Check for New Version
-        id: check_version
+      - name: Sync dev with upstream main
         env:
-          GH_TOKEN: ${{ github.token }}
-          MANIFEST_URL: https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json
           DRY_RUN: ${{ github.event.inputs.dry_run }}
-        run: |
-          ./.github/scripts/check-version.sh
-
-      - name: Rebase Upstream Changes
-        if: steps.check_version.outputs.build_needed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           echo "Adding upstream remote..."
-          git remote add upstream https://github.com/google-antigravity/antigravity-cli.git || true
+          git remote add upstream https://github.com/google-antigravity/antigravity-cli.git || \
+            git remote set-url upstream https://github.com/google-antigravity/antigravity-cli.git
 
           echo "Fetching origin/dev..."
           git fetch origin dev
@@ -73,16 +69,44 @@ jobs:
           echo "Fetching upstream/main..."
           git fetch upstream main
 
-          echo "Rebasing upstream/main into dev..."
-          git checkout dev
-          git rebase upstream/main
+          echo "Checking out dev from origin/dev..."
+          git checkout -B dev origin/dev
 
-          if [[ "${{ github.event.inputs.dry_run }}" != "true" ]]; then
-            echo "Pushing updated dev branch to origin..."
-            git push --force-with-lease="refs/heads/dev:${expected_dev}" origin dev:dev
+          read -r behind ahead < <(git rev-list --left-right --count upstream/main...HEAD)
+          echo "Before sync: dev is ${behind} commits behind and ${ahead} commits ahead of upstream/main."
+
+          if [[ "$behind" != "0" ]]; then
+            echo "Rebasing dev onto upstream/main..."
+            git rebase upstream/main
           else
-            echo "Dry run: skipping push to origin."
+            echo "dev is already caught up with upstream/main."
           fi
+
+          read -r behind_after ahead_after < <(git rev-list --left-right --count upstream/main...HEAD)
+          echo "After sync: dev is ${behind_after} commits behind and ${ahead_after} commits ahead of upstream/main."
+
+          if [[ "$behind_after" != "0" ]]; then
+            echo "dev is still behind upstream/main after rebase." >&2
+            exit 1
+          fi
+
+          if [[ "$behind" != "0" ]]; then
+            if [[ "$DRY_RUN" != "true" ]]; then
+              echo "Pushing synced dev branch to origin..."
+              git push --force-with-lease="refs/heads/dev:${expected_dev}" origin HEAD:dev
+            else
+              echo "Dry run: skipping push to origin."
+            fi
+          fi
+
+      - name: Check for New Version
+        id: check_version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MANIFEST_URL: https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          ./.github/scripts/check-version.sh
 
       - name: Build Standalone Binaries
         if: steps.check_version.outputs.build_needed == 'true'
@@ -105,30 +129,192 @@ jobs:
           path: antigravity-termux-standalone.tar.gz
           if-no-files-found: error
 
+      - name: Upload Installer Script to Run Artifacts
+        if: steps.check_version.outputs.build_needed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: antigravity-termux-install-script-${{ steps.check_version.outputs.version }}
+          path: install.sh
+          if-no-files-found: error
+
+  release-installer-smoke:
+    name: Release Installer Smoke Test
+    needs: check-and-build
+    if: ${{ needs.check-and-build.outputs.build_needed == 'true' }}
+    permissions:
+      actions: read
+      contents: read
+    uses: wallentx/gh-actions/.github/workflows/termux-run.yml@main
+    with:
+      packages: |
+        ca-certificates
+        curl
+        tar
+        glibc
+        glibc-runner
+        resolv-conf
+      copy-paths: |
+        artifact
+      env: |
+        AGY_EXPECTED_VERSION=${{ needs.check-and-build.outputs.version }}
+        ARTIFACT_NAME=antigravity-termux-standalone-${{ needs.check-and-build.outputs.version }}
+        INSTALLER_ARTIFACT_NAME=antigravity-termux-install-script-${{ needs.check-and-build.outputs.version }}
+      host-commands: |
+        set -Eeuo pipefail
+
+        rm -rf artifact
+        mkdir -p artifact
+        gh run download "$GITHUB_RUN_ID" \
+          --repo "$GITHUB_REPOSITORY" \
+          --name "$ARTIFACT_NAME" \
+          --dir artifact
+
+        gh run download "$GITHUB_RUN_ID" \
+          --repo "$GITHUB_REPOSITORY" \
+          --name "$INSTALLER_ARTIFACT_NAME" \
+          --dir artifact
+
+        test -f artifact/antigravity-termux-standalone.tar.gz
+        test -f artifact/install.sh
+        tar -tzf artifact/antigravity-termux-standalone.tar.gz
+      commands: |
+        set -Eeuo pipefail
+
+        export TERMUX_VERSION="${TERMUX_VERSION:-ci}"
+
+        AGY_INSTALL_URL="file://$PWD/artifact/antigravity-termux-standalone.tar.gz" \
+        AGY_INSTALL_SKIP_LAUNCH=1 \
+          bash artifact/install.sh
+
+        test -x "$PREFIX/bin/agy"
+        test -x "$PREFIX/bin/agy.va39"
+
+        version_output=$("$PREFIX/bin/agy" --version)
+        printf 'agy version: %s\n' "$version_output"
+        printf '%s\n' "$version_output" | grep -F "$AGY_EXPECTED_VERSION" >/dev/null
+
+        "$PREFIX/bin/agy" --help >/dev/null
+
+  release-artifact-smoke:
+    name: Release Artifact Smoke Test
+    needs: check-and-build
+    if: ${{ needs.check-and-build.outputs.build_needed == 'true' }}
+    permissions:
+      actions: read
+      contents: read
+    uses: wallentx/gh-actions/.github/workflows/termux-run.yml@main
+    with:
+      packages: |
+        ca-certificates
+        glibc
+        glibc-runner
+        resolv-conf
+        tar
+      copy-paths: |
+        artifact
+      env: |
+        AGY_EXPECTED_VERSION=${{ needs.check-and-build.outputs.version }}
+        ARTIFACT_NAME=antigravity-termux-standalone-${{ needs.check-and-build.outputs.version }}
+      host-commands: |
+        set -Eeuo pipefail
+
+        rm -rf artifact
+        mkdir -p artifact
+        gh run download "$GITHUB_RUN_ID" \
+          --repo "$GITHUB_REPOSITORY" \
+          --name "$ARTIFACT_NAME" \
+          --dir artifact
+
+        test -f artifact/antigravity-termux-standalone.tar.gz
+        tar -tzf artifact/antigravity-termux-standalone.tar.gz
+      commands: |
+        set -Eeuo pipefail
+
+        export TERMUX_VERSION="${TERMUX_VERSION:-ci}"
+
+        tar -tzf artifact/antigravity-termux-standalone.tar.gz
+
+        rm -rf agy-smoke
+        mkdir -p agy-smoke
+        tar -xzf artifact/antigravity-termux-standalone.tar.gz -C agy-smoke
+        find agy-smoke -maxdepth 2 -type f -print
+
+        if [ -x agy-smoke/agy ]; then
+          agy=agy-smoke/agy
+        elif [ -x agy-smoke/bin/agy ]; then
+          agy=agy-smoke/bin/agy
+        else
+          echo "Could not find executable agy in release archive." >&2
+          exit 1
+        fi
+
+        version_output=$("$agy" --version)
+        printf 'agy version: %s\n' "$version_output"
+        printf '%s\n' "$version_output" | grep -F "$AGY_EXPECTED_VERSION" >/dev/null
+
+        "$agy" --help >/dev/null
+
+  publish-release:
+    name: Publish Release
+    needs:
+      - check-and-build
+      - release-installer-smoke
+      - release-artifact-smoke
+    if: ${{ needs.check-and-build.outputs.build_needed == 'true' }}
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    permissions:
+      id-token: write
+      attestations: write
+      contents: write
+      actions: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: 🧰 Actions Toolbox
+        uses: wallentx/gh-actions/composite/actions-toolbox@main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          checkout: false
+
+      - name: Download Standalone Archive
+        uses: actions/download-artifact@v8
+        with:
+          name: antigravity-termux-standalone-${{ needs.check-and-build.outputs.version }}
+          path: .
+
       - name: Attest Artifacts
         uses: actions/attest-build-provenance@v4
-        if: steps.check_version.outputs.build_needed == 'true' && github.event.inputs.dry_run != 'true'
+        if: github.event.inputs.dry_run != 'true'
         with:
           subject-path: 'antigravity-termux-standalone.tar.gz'
 
       - name: Set up mq
-        if: steps.check_version.outputs.build_needed == 'true'
         uses: harehare/setup-mq@v1
 
       - name: Fetch and Parse Release Notes
-        if: steps.check_version.outputs.build_needed == 'true'
         env:
           DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
           ./.github/scripts/generate-release-notes.sh \
-            "${{ steps.check_version.outputs.version }}"
+            "${{ needs.check-and-build.outputs.version }}"
 
       - name: Create and Publish GitHub Release
-        if: steps.check_version.outputs.build_needed == 'true' && github.event.inputs.dry_run != 'true'
+        if: github.event.inputs.dry_run != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ steps.check_version.outputs.version }}"
+          VERSION="${{ needs.check-and-build.outputs.version }}"
           gh release create "v$VERSION" \
             --repo "${{ github.repository }}" \
             --title "Antigravity CLI Termux Standalone v$VERSION" \
@@ -136,7 +322,6 @@ jobs:
             antigravity-termux-standalone.tar.gz
 
       - name: Post Run Summary
-        if: steps.check_version.outputs.build_needed == 'true'
         run: |
           {
             echo "### 🚀 Antigravity CLI Standalone Release Build Summary"
@@ -156,7 +341,7 @@ jobs:
             echo "#### 📥 Download Links"
             echo "* 🔗 [Download from GHA Run Artifacts](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) (Located at the bottom of the run page)"
             if [[ "${{ github.event.inputs.dry_run }}" != "true" ]]; then
-              echo "* 📦 [Download from GitHub Releases](${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ steps.check_version.outputs.version }})"
+              echo "* 📦 [Download from GitHub Releases](${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ needs.check-and-build.outputs.version }})"
             fi
             echo ""
 
