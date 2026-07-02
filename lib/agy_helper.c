@@ -288,7 +288,7 @@ static int resolve_qemu_for_cpu(const char *prefix, char *qemu_path, size_t qemu
 
 int main(int argc, char **argv) {
     char exec_path[PATH_MAX];
-    char lib_path[PATH_MAX * 3];
+    char lib_path[PATH_MAX + 16];
     char patched_bin[PATH_MAX];
     char dynamic_loader[PATH_MAX];
     char cert_path[PATH_MAX];
@@ -366,8 +366,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Construct relocatable library search path for native Termux glibc.
-    written = snprintf(lib_path, sizeof(lib_path), "%s/../lib:%s/glibc/lib", dir, prefix_path);
+    // Use only the Termux glibc runtime libraries.
+    written = snprintf(lib_path, sizeof(lib_path), "%s/glibc/lib", prefix_path);
     if (written < 0 || written >= (int)sizeof(lib_path)) {
         return 1;
     }
