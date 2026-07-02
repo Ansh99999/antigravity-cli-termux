@@ -57,6 +57,33 @@ jobs:
         run: |
           ./.github/scripts/check-version.sh
 
+      - name: Rebase Upstream Changes
+        if: steps.check_version.outputs.build_needed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          echo "Adding upstream remote..."
+          git remote add upstream https://github.com/google-antigravity/antigravity-cli.git || true
+
+          echo "Fetching origin/dev..."
+          git fetch origin dev
+          expected_dev="$(git rev-parse origin/dev)"
+
+          echo "Fetching upstream/main..."
+          git fetch upstream main
+
+          echo "Rebasing upstream/main into dev..."
+          git checkout dev
+          git rebase upstream/main
+
+          if [[ "${{ github.event.inputs.dry_run }}" != "true" ]]; then
+            echo "Pushing updated dev branch to origin..."
+            git push --force-with-lease="refs/heads/dev:${expected_dev}" origin dev:dev
+          else
+            echo "Dry run: skipping push to origin."
+          fi
+
       - name: Build Standalone Binaries
         if: steps.check_version.outputs.build_needed == 'true'
         env:
