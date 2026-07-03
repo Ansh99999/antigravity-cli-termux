@@ -2,6 +2,15 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+## 1.0.16
+
+- Improved the `/tasks` detail panel to automatically scroll to the bottom as new background task logs stream in, and default to the latest output when opened while preserving scroll position if scrolled up manually.
+- Improved model generation resilience by adding automatic client-side retries when encountering transient errors.
+- Fixed dynamically defined subagents by transitioning definitions from JSON to Markdown format, fixing an issue where dynamically created subagents failed to invoke.
+- Fixed a crash occurring when executing background tasks or terminal commands that produce empty outputs (such as `sleep`).
+- Fixed shutdown resource leaks by integrating the shared SQLite summary store for background synchronization and resolving goroutine and database connection leaks on CLI exit.
+- Fixed a permission manager hook error by safely handling empty decision strings returned by pre-tool hooks instead of failing with an "unknown pre-tool hook decision" error.
+
 ## 1.0.15
 
 - Introduced a new interactive status indicator below the input box that displays active subagents and background tasks in real-time, making it easy to monitor and navigate parallel workflows at a glance.
