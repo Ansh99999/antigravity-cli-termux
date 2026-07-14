@@ -2,6 +2,18 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+## 1.1.2
+
+- Added an `f` (full diff) shortcut to the create-file tool review screen so new-file confirmations can open a full-screen diff view, matching the existing file-edit experience.
+- Added support for pasting the OAuth authorization code in print mode (-p) via the controlling terminal (/dev/tty on POSIX and CONIN$ on Windows) when stdin is consumed by a piped prompt, and made truly headless runs fail fast with an actionable message instead of blocking.
+- Improved responsiveness on large conversations (5000+ steps) in no flickering mode by switching hot-path line-count methods to pointer receivers, cutting the per-frame prefix-sum cost and eliminating sustained 99% CPU and keystroke lag.
+- Fixed print mode silently downgrading to the default model when --model cannot be resolved by hard-failing with a non-zero exit and listing the available models, while interactive sessions keep the fallback-with-warning behavior.
+- Fixed permission checks not respecting the allowlist for nested command substitutions, so a command like echo "$(dirname $(git rev-parse --show-toplevel))" now runs without prompting when echo and git are allowlisted, instead of double-counting the nested command and prompting for review.
+- Fixed the CLI keybindings file staying out of sync with /keybindings when new default bindings are introduced by persisting the injected defaults while preserving user overrides.
+- Fixed garbled builtin tool headers such as CodeSearch(4 files found...) by mapping generic tool steps back to clean summaries like Read(/path) and CodeSearch(query).
+- Fixed mcp manager failing to resolve tool schema paths in standalone mode and leaking MCP server subprocesses after shutdown, which previously caused panics and cleanup failures for custom agents loading MCP tools.
+- Fixed a data race and copy-on-write violation when updating subagent states by cloning their stats before in-place mutation, preventing corrupted step counts and status for parallel subagents.
+
 ## 1.1.1
 
 - Added the `--agent` flag and `agent/agents` subcommand, allowing users to select a custom agent at launch and list available agents.
