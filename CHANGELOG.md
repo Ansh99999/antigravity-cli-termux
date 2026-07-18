@@ -2,6 +2,16 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+ ## 1.1.4
+
+- Added support for stacking multiple leading slash commands in a single prompt, so a chain like `/plan /grill-me <prompt>` parses, activates, and renders every command in the order you typed them.
+- Improved scrolling in the `/diff` viewer so paging through a diff no longer jitters or pushes the status line off the screen when lines wrap or comments expand.
+- Fixed custom agents that declare `subagent: false` still appearing in the available-subagents list and being invocable as subagents.
+- Fixed headless (`-p` / `--print`) runs so they now honor persisted `settings.json` policies, including `permissions`, file access, sandbox mode, auto-execution, and artifact review.
+- Fixed `/btw` side-questions leaking into the conversation list as duplicate entries that carried the parent conversation's title.
+- Fixed the prompt to honor a custom Enter binding to `prompt.insert_newline`, so a remapped Enter inserts a newline instead of submitting.
+- Fixed eligibility error messages so the CLI shows the real reason again instead of defaulting to a generic "unknown reason".
+
 ## 1.1.3
 
 - Added a `/codesearch` command (aliases `/cs` and `/search`) to interactively search code across your workspace, interpreting queries as regex by default with `-F`/`--literal` for exact matching and `f:`/`file:` globs to include or exclude paths.
