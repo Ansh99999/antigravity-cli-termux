@@ -2,7 +2,7 @@
 
 Antigravity CLI understands your codebase, makes edits with your permission, and executes commands — right from your terminal.
 
-- **Official Docs**: [antigravity.google/docs/cli-overview](https://antigravity.google/docs/cli-overview)
+- **Official Docs**: [antigravity.google/docs/cli/overview](https://antigravity.google/docs/cli/overview)
 - **Official Website**: [antigravity.google/product/antigravity-cli](https://antigravity.google/product/antigravity-cli)
 
 ![Antigravity CLI Demo](agy-cli-demo.gif)
