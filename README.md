@@ -1,4 +1,65 @@
 # Antigravity CLI
+> [!NOTE]
+> **Community Acknowledgement:** Much of the core binary patching and VA39 memory layout engineering implemented in this Termux fork is built upon the foundational work and discoveries of [@hjotha](https://github.com/hjotha) and [@Brajesh2022](https://github.com/Brajesh2022). Deep appreciation to the community for unlocking compatibility!
+
+## 🚀 Quick Start (Termux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wallentx/antigravity-cli-termux/dev/install.sh | bash
+```
+
+![Antigravity CLI Demo](antigravity.gif)
+
+## 📱 Termux Standalone Port & Architecture
+
+This repository maintains an automated standalone fork of the Google Antigravity TUI CLI that is fully relocatable, wrapper-less, and self-updating within the Android Termux `arm64` environment.
+
+### 🛠️ Automated Artifact Generation Pipeline
+
+Every 6 hours, a GitHub Actions workflow performs the following engineering pipeline to produce the release archive:
+
+```mermaid
+graph TD
+    A[Upstream Release Detected] --> B[Download Linux arm64 Binary]
+    B --> C[Apply VA39 Memory Alignment Patches]
+    C --> D[Cross-Compile Native Termux Bootstrapper]
+    D --> E[Package Relocatable Standalone Tarball]
+    E --> F[Cryptographically Sign Build via Sigstore OIDC]
+```
+
+#### 1. VA39 Memory Layout Patching (TCMalloc)
+Upstream utilizes Google's `TCMalloc`, which assumes a standard 48-bit Virtual Address (VA) space. On Android devices with custom kernels or older configurations, the user space is restricted to a 39-bit VA space. Running the unmodified binary results in segmentation faults or fatal allocation failures (`MmapAligned() failed`).
+A dedicated Python patching process is executed during the build to:
+* Rewrite specific bitmask and `ubfx` (unsigned bitfield extract) instructions.
+* Adjust page-alignment logic and `mmap` parameters.
+* Rewrite low-level library wrappers (`faccessat2`) to guarantee absolute compatibility with 39-bit systems.
+
+#### 2. Relocatable C Bootstrapper
+Standard Termux runs under the Android Bionic libc environment, injecting specific preloads (`LD_PRELOAD=/data/.../libtermux-exec.so`) to intercept calls. However, because the patched binary is built under glibc, loading it directly causes immediate crashes (`invalid ELF header`) when the glibc dynamic linker processes Bionic preloads.
+To circumvent this, a relocatable C bootstrapper (`agy`) is compiled:
+* **Dynamic Resolution**: Resolves its own folder at runtime using `/proc/self/exe` via `readlink`, enabling the package to be extracted and executed in *any* directory without wrapper scripts.
+* **Environment Cleansing**: Unsets conflicting environment variables (`LD_PRELOAD`, `LD_LIBRARY_PATH`) before executing the loader.
+* **Redirection**: Configures the native Termux CA bundle (`SSL_CERT_FILE`) and DNS routing (`GODEBUG=netdns=cgo`), then passes execution cleanly to the glibc loader.
+
+#### 3. LSE (Large System Extensions) & QEMU Support
+The engine requires ARMv8.1-A Atomics (LSE) to run natively. On older ARMv8.0-A CPUs lacking LSE support, the binary will crash with an "Illegal Instruction".
+This fork includes an automated compatibility layer:
+* **Detection**: The installer and bootstrapper automatically detect if the CPU lacks LSE support via `getauxval(AT_HWCAP)`.
+* **QEMU Emulation**: If LSE is missing and `qemu-aarch64` is already installed, the bootstrapper wraps engine execution through it. If QEMU is missing, the installer reports that the `qemu-user-aarch64` package may be needed and exits without installing packages automatically.
+
+#### 4. Native Termux Only
+This standalone port is intentionally scoped to native Termux on Android. PRoot environments can run Google's official Antigravity CLI binary directly, so this project no longer ships a PRoot compatibility layer.
+
+If you are inside PRoot, use the official installer instead:
+
+```bash
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+```
+
+#### 5. In-Place Self-Updating
+The C bootstrapper intercepts the `update` subcommand and queries this fork's GitHub Releases API, providing a seamless in-place update mechanism that updates both the patched engine and itself without needing complex wrappers or manually executing curl commands.
+
+---
 
 Antigravity CLI understands your codebase, makes edits with your permission, and executes commands — right from your terminal.
 
@@ -33,6 +94,11 @@ Antigravity CLI brings the core capabilities of Antigravity 2.0 (multi-step reas
 ---
 
 ## Installation
+
+### Android (Termux)
+```bash
+curl -fsSL https://raw.githubusercontent.com/wallentx/antigravity-cli-termux/dev/install.sh | bash
+```
 
 ### macOS / Linux
 ```bash

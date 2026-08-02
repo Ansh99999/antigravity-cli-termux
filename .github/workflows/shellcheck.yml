@@ -1,0 +1,64 @@
+name: ShellCheck
+
+on:
+  pull_request:
+
+permissions: read-all
+
+concurrency:
+  group: shellcheck-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: 🧰 Actions Toolbox
+        uses: wallentx/gh-actions/composite/actions-toolbox@main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          checkout: false
+          include-packages: |
+            shellcheck
+
+      - name: Decide Whether To Run
+        id: changed
+        run: .github/scripts/ci-should-run.py shellcheck
+
+      - name: Skip ShellCheck
+        if: steps.changed.outputs.should_run != 'true'
+        env:
+          SKIP_REASON: ${{ steps.changed.outputs.reason }}
+        run: echo "$SKIP_REASON"
+
+      - name: Run ShellCheck
+        if: steps.changed.outputs.should_run == 'true'
+        run: |
+          mapfile -t files < <(
+            git ls-files \
+              '*.sh' \
+              '*.bash' \
+              '*.ksh' \
+              ':!:docs/**' \
+              ':!:examples/**'
+          )
+
+          if (( ${#files[@]} == 0 )); then
+            echo "No shell scripts found."
+            exit 0
+          fi
+
+          shellcheck --color=always "${files[@]}"

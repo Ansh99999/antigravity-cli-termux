@@ -33,7 +33,7 @@ The terminal-first surface to interact with Antigravity agents. Stay in your flo
 - Fixed MCP OAuth against providers that do not strictly follow the spec (such as Salesforce and Atlassian) by relaxing issuer validation and including the `refresh_token` grant.
 - Fixed `/btw` failing with a "parent conversation not found" error when used as the very first action in a fresh session.
 - Fixed clipboard corruption of CJK and other non-ASCII text when copying on Windows.
-- Fixed print mode (`-p`) sending a prompt before the account-eligibility check finished.
+- Fixed print mode (`-p`) sending a prompt before the account-eligibility check finished, which let ineligible accounts bypass the check the interactive UI enforces.
 
 ## 1.1.6
 

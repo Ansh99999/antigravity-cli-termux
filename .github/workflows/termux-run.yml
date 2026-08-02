@@ -1,0 +1,65 @@
+name: Termux Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: Release version or tag to smoke-test, for example 1.0.7 or v1.0.7
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  run-termux:
+    name: Run Termux Docker (ARM)
+    uses: wallentx/gh-actions/.github/workflows/termux-run.yml@main
+    with:
+      packages: |
+        ca-certificates
+        glibc
+        glibc-runner
+        resolv-conf
+        tar
+      copy-paths: |
+        artifact
+      env: |
+        RELEASE_VERSION=${{ inputs.release_version }}
+      host-commands: |
+        set -Eeuo pipefail
+
+        mkdir -p artifact
+        release_tag="$RELEASE_VERSION"
+        case "$release_tag" in
+          v*) ;;
+          *) release_tag="v${release_tag}" ;;
+        esac
+
+        echo "Downloading release artifact for ${release_tag}..."
+        curl -fsSL \
+          -o artifact/antigravity-termux-standalone.tar.gz \
+          "https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}/antigravity-termux-standalone.tar.gz"
+
+        test -f artifact/antigravity-termux-standalone.tar.gz
+        tar -tzf artifact/antigravity-termux-standalone.tar.gz
+      commands: |
+        set -Eeuo pipefail
+
+        tar -tzf artifact/antigravity-termux-standalone.tar.gz
+
+        rm -rf agy-smoke
+        mkdir -p agy-smoke
+        tar -xzf artifact/antigravity-termux-standalone.tar.gz -C agy-smoke
+        find agy-smoke -maxdepth 2 -type f -print
+
+        if [ -x agy-smoke/agy ]; then
+          agy=agy-smoke/agy
+        elif [ -x agy-smoke/bin/agy ]; then
+          agy=agy-smoke/bin/agy
+        else
+          echo "Could not find executable agy in release archive." >&2
+          exit 1
+        fi
+
+        "$agy" --help

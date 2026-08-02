@@ -1,0 +1,364 @@
+#!/usr/bin/env bash
+# Antigravity - Termux Installer
+set -Eeuo pipefail
+
+REPO="${AGY_REPO:-wallentx/antigravity-cli-termux}"
+URL="${AGY_INSTALL_URL:-https://github.com/$REPO/releases/latest/download/antigravity-termux-standalone.tar.gz}"
+
+# ── Environment Detection ─────────────────────────────────────────────────────
+if [[ -z "${TERMUX_VERSION:-}" || -z "${PREFIX:-}" ]]; then
+  cat >&2 <<'EOF'
+[ERR] This installer is only for native Termux.
+
+PRoot environments can use Google's official Antigravity CLI binary
+directly, so this Termux-specific standalone port does not install there.
+Use the official installer instead:
+
+  curl -fsSL https://antigravity.google/cli/install.sh | bash
+
+EOF
+  exit 1
+fi
+
+ENV_TYPE="termux"
+TERMUX_PREFIX="$PREFIX"
+INSTALL_BIN_DIR="${TERMUX_PREFIX}/bin"
+TMP="${TERMUX_PREFIX}/tmp/antigravity-termux-standalone.tar.gz"
+EXTRACT_DIR="${TERMUX_PREFIX}/tmp/.agy-extract"
+INSTALL_SUCCESS=0
+
+# Ensure base directories exist for fresh setups
+mkdir -p "$(dirname "$TMP")" 2>/dev/null || true
+
+# ── Cleanup Hook ──────────────────────────────────────────────────────────────
+cleanup() {
+  printf "\033[?25h" # Restore cursor if cancelled
+  [[ -n "${TMP_LOGO:-}" && -f "$TMP_LOGO" ]] && rm -f "$TMP_LOGO"
+  [[ -d "$EXTRACT_DIR" ]] && rm -rf "$EXTRACT_DIR"
+  if [[ "${INSTALL_SUCCESS:-0}" -ne 1 ]]; then
+    [[ -f "$TMP" ]] && rm -f "$TMP"
+    if [[ -n "${AGY_BAK:-}" && -f "$AGY_BAK" ]]; then
+      mv -f "$AGY_BAK" "$INSTALL_BIN_DIR/agy" || true
+    fi
+    if [[ -n "${AGY_VA39_BAK:-}" && -f "$AGY_VA39_BAK" ]]; then
+      mv -f "$AGY_VA39_BAK" "$INSTALL_BIN_DIR/agy.va39" || true
+    fi
+  else
+    if [[ -n "${AGY_BAK:-}" && -f "$AGY_BAK" ]]; then
+      rm -f "$AGY_BAK" || true
+    fi
+    if [[ -n "${AGY_VA39_BAK:-}" && -f "$AGY_VA39_BAK" ]]; then
+      rm -f "$AGY_VA39_BAK" || true
+    fi
+  fi
+}
+
+handle_cancel() {
+  cleanup
+  die
+}
+
+trap cleanup EXIT
+trap handle_cancel INT TERM
+
+# ── Colors ────────────────────────────────────────────────────────────────────
+if [[ -t 1 ]]; then
+  BOLD="\033[1m"
+  DIM="\033[2m"
+  GREEN="\033[32m"
+  RED="\033[31m"
+  CYAN="\033[36m"
+  RESET="\033[0m"
+else
+  BOLD="" DIM="" GREEN="" RED="" CYAN="" RESET=""
+fi
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+info()    { printf '%b\n' " ${CYAN}[..]${RESET} ${DIM}$*${RESET}"; }
+ok()      { printf '%b\n' " ${GREEN}[OK]${RESET} $*"; }
+die() {
+  {
+    printf "\033[?25h" # Restore cursor
+    if [[ $# -gt 0 ]]; then
+      printf '\n%b\n' " ${RED}[ERR]${RESET} $*"
+    else
+      printf '\n%b\n' " ${RED}[ERR]${RESET} Installation failed or was cancelled."
+    fi
+    printf "For manual patching and installation:\n"
+    printf "%bhttps://gist.github.com/Brajesh2022/e42160d29b55417db6c18c52dd1d6d37%b\n\n" "$CYAN" "$RESET"
+  } >&2
+  exit 1
+}
+divider() { printf '%b\n' "${DIM}────────────────────────────────────────${RESET}"; }
+
+terminal_cols() {
+  local cols
+  if [[ -t 1 ]] && cols=$(tput cols 2>/dev/null) && [[ "$cols" =~ ^[0-9]+$ ]] && (( cols > 0 )); then
+    echo "$cols"
+    return
+  fi
+  echo 60
+}
+
+spinner() {
+  local pid=$1
+  local msg=$2
+  local spinstr='\|/-'
+  printf "\033[?25l" # Hide cursor
+  while kill -0 "$pid" 2>/dev/null; do
+    local temp=${spinstr#?}
+    printf "\r\033[K %b[%c]%b %b%s%b" "$CYAN" "$spinstr" "$RESET" "$DIM" "$msg" "$RESET"
+    local spinstr=$temp${spinstr%"$temp"}
+    sleep 0.1
+  done
+  local exit_status=0
+  wait "$pid" || exit_status=$?
+  if [ $exit_status -eq 0 ]; then
+    printf "\r\033[K %b[OK]%b %s\n" "$GREEN" "$RESET" "$msg"
+  else
+    printf "\r\033[K %b[ERR]%b %s\n" "$RED" "$RESET" "$msg"
+  fi
+  printf "\033[?25h" # Show cursor
+  return $exit_status
+}
+
+download_with_progress() {
+  local url=$1
+  local dest=$2
+
+  printf "\033[?25l" # Hide cursor
+
+  local total_size=""
+  if head_out=$(curl -sLI -H "Cache-Control: no-cache" "$url" 2>/dev/null); then
+    total_size=$(echo "$head_out" | awk 'BEGIN{IGNORECASE=1} /^content-length:/{print $2}' | tail -n1 | tr -d '\r')
+  fi
+
+  if [[ ! "$total_size" =~ ^[0-9]+$ ]]; then
+    curl -fLs -H "Cache-Control: no-cache" "$url" -o "$dest" >/dev/null 2>&1 &
+    spinner $! "Downloading payload..."
+    return $?
+  fi
+
+  local cols
+  cols=$(terminal_cols)
+
+  local w=$(( cols - 38 ))
+  (( w > 60 )) && w=60
+  (( w < 10 )) && w=10
+
+  curl -fLs -H "Cache-Control: no-cache" "$url" -o "$dest" >/dev/null 2>&1 &
+  local pid=$!
+
+  while kill -0 "$pid" 2>/dev/null; do
+    local current_size=0
+    if [[ -f "$dest" ]]; then
+      current_size=$(wc -c < "$dest" 2>/dev/null || echo 0)
+    fi
+
+    awk -v c="$current_size" -v t="$total_size" -v cyan="$CYAN" -v dim="$DIM" -v rst="$RESET" -v width="$w" '
+    BEGIN {
+      pct = (t > 0) ? (c / t) * 100 : 0
+      if (pct > 100) pct = 100
+      filled = int((pct / 100) * width)
+      empty = width - filled
+
+      bar = ""
+      for (i=0; i<filled; i++) bar = bar "█"
+      for (i=0; i<empty; i++) bar = bar "░"
+
+      c_mb = c / 1048576
+      t_mb = t / 1048576
+
+      printf "\r\033[K %s[..]%s [%s] %3d%% %s%5.1fM / %4.1fM%s", cyan, rst, bar, pct, dim, c_mb, t_mb, rst
+    }'
+    sleep 0.15
+  done
+
+  local exit_status=0
+  wait "$pid" || exit_status=$?
+
+  if [ $exit_status -eq 0 ]; then
+    awk -v t="$total_size" -v grn="$GREEN" -v dim="$DIM" -v rst="$RESET" -v width="$w" '
+    BEGIN {
+      bar = ""
+      for (i=0; i<width; i++) bar = bar "█"
+      t_mb = t / 1048576
+      printf "\r\033[K %s[OK]%s [%s] 100%% %s%5.1fM / %4.1fM%s\n", grn, rst, bar, dim, t_mb, t_mb, rst
+    }'
+  else
+    printf "\r\033[K %b[ERR]%b Download failed.\n" "$RED" "$RESET"
+  fi
+
+  printf "\033[?25h" # Restore cursor
+  return $exit_status
+}
+
+# ── Header ────────────────────────────────────────────────────────────────────
+echo ""
+TMP_LOGO=$(mktemp 2>/dev/null || echo "${HOME}/.local/.agy-logo.ans")
+
+if { curl -fLs -H "Cache-Control: no-cache" "https://raw.githubusercontent.com/${REPO}/dev/logo.ans" > "$TMP_LOGO" 2>/dev/null || curl -fLs -H "Cache-Control: no-cache" "https://raw.githubusercontent.com/Brajesh2022/antigravity-cli-termux/dev/logo.ans" > "$TMP_LOGO" 2>/dev/null; } && [[ -s "$TMP_LOGO" ]]; then
+
+  COLS=$(terminal_cols)
+
+  awk -v cols="$COLS" -v arch="$(uname -m)" -v bold="${BOLD}${CYAN}" -v dim="${DIM}" -v grn="${GREEN}" -v rst="${RESET}" '
+  {
+    sub(/\r$/, "");
+
+    if (cols >= 48) {
+      printf "%s", $0;
+      if (NR == 3)      printf "\033[28G %sAntigravity Termux%s", bold, rst;
+      else if (NR == 4) printf "\033[28G %sStandalone Installer%s", dim, rst;
+      else if (NR == 5) printf "\033[28G %s────────────────────%s", dim, rst;
+      else if (NR == 6) printf "\033[28G %sTarget:%s  Termux", dim, rst;
+      else if (NR == 7) printf "\033[28G %sArch:%s    %s", dim, rst, arch;
+      else if (NR == 8) printf "\033[28G %sStatus:%s  %sOnline%s", dim, rst, grn, rst;
+      printf "\n";
+    } else {
+      print $0;
+    }
+  }
+  END {
+    if (cols < 48) {
+      printf "\n";
+      printf "  %sAntigravity Termux%s\n", bold, rst;
+      printf "  %sStandalone Installer%s\n", dim, rst;
+      printf "  %s────────────────────%s\n", dim, rst;
+      printf "  %sTarget:%s  Termux\n", dim, rst;
+      printf "  %sArch:%s    %s\n", dim, rst, arch;
+      printf "  %sStatus:%s  %sOnline%s\n", dim, rst, grn, rst;
+    }
+  }' "$TMP_LOGO"
+
+  rm -f "$TMP_LOGO"
+else
+  printf "  %bAntigravity Termux%b\n" "${BOLD}${CYAN}" "${RESET}"
+  printf "  %bStandalone Installer%b\n" "${DIM}" "${RESET}"
+fi
+echo ""
+divider
+
+# ── Environment check ─────────────────────────────────────────────────────────
+[[ "$(uname -m)" == "aarch64" ]] || die "Architecture must be aarch64"
+command -v curl >/dev/null 2>&1  || die "curl is required"
+command -v tar  >/dev/null 2>&1  || die "tar is required"
+command -v install >/dev/null 2>&1 || die "install is required"
+
+GLIBC_LOADER="${TERMUX_PREFIX}/glibc/lib/ld-linux-aarch64.so.1"
+if [[ ! -x "$GLIBC_LOADER" ]]; then
+  die "Missing Termux glibc loader: $GLIBC_LOADER
+You may need to install the glibc-repo and glibc packages, then rerun this installer."
+fi
+
+check_lse() {
+  grep -q "atomics" /proc/cpuinfo
+}
+
+check_qemu() {
+  command -v qemu-aarch64 >/dev/null 2>&1
+}
+
+CA_BUNDLE="${TERMUX_PREFIX}/etc/tls/cert.pem"
+if [[ ! -s "$CA_BUNDLE" ]]; then
+  die "Missing Termux CA bundle: $CA_BUNDLE
+You may need to install the ca-certificates package, then rerun this installer."
+fi
+
+RESOLV_CONF="${TERMUX_PREFIX}/etc/resolv.conf"
+if [[ ! -r "$RESOLV_CONF" ]]; then
+  die "Missing Termux resolver configuration: $RESOLV_CONF
+You may need to install the resolv-conf package, then rerun this installer:
+  pkg install resolv-conf"
+fi
+
+if ! check_lse; then
+  if ! check_qemu; then
+    die "This CPU does not support LSE atomics, and qemu-aarch64 was not found.
+You may need to install the qemu-user-aarch64 package, then rerun this installer."
+  fi
+  ok "LSE Emulation: QEMU enabled"
+fi
+
+ok "Environment: ${ENV_TYPE} (aarch64)"
+
+# ── Clean previous install ────────────────────────────────────────────────────
+mkdir -p "$INSTALL_BIN_DIR" "$(dirname "$TMP")" 2>/dev/null
+rm -rf "$EXTRACT_DIR"
+mkdir -p "$EXTRACT_DIR"
+
+# ── Download ──────────────────────────────────────────────────────────────────
+download_with_progress "$URL" "$TMP" || die
+
+# ── Extraction ────────────────────────────────────────────────────────────────
+tar -xz -C "$EXTRACT_DIR" -f "$TMP" agy agy.va39 >/dev/null 2>&1 &
+spinner $! "Extracting binaries..." || die
+
+AGY_BAK=""
+AGY_VA39_BAK=""
+if [[ -f "$INSTALL_BIN_DIR/agy" ]]; then
+  AGY_BAK="$INSTALL_BIN_DIR/agy.bak.$$"
+  mv -f "$INSTALL_BIN_DIR/agy" "$AGY_BAK" || die "Failed to back up existing agy binary from $INSTALL_BIN_DIR"
+fi
+if [[ -f "$INSTALL_BIN_DIR/agy.va39" ]]; then
+  AGY_VA39_BAK="$INSTALL_BIN_DIR/agy.va39.bak.$$"
+  mv -f "$INSTALL_BIN_DIR/agy.va39" "$AGY_VA39_BAK" || die "Failed to back up existing agy.va39 binary from $INSTALL_BIN_DIR"
+fi
+
+install -m 0755 "$EXTRACT_DIR/agy" "$INSTALL_BIN_DIR/agy" || die "Failed to install agy binary to $INSTALL_BIN_DIR"
+install -m 0755 "$EXTRACT_DIR/agy.va39" "$INSTALL_BIN_DIR/agy.va39" || die "Failed to install agy.va39 binary to $INSTALL_BIN_DIR"
+rm -rf "$EXTRACT_DIR"
+
+# ── Verify twin-binary ────────────────────────────────────────────────────────
+if [[ ! -f "$INSTALL_BIN_DIR/agy" || ! -f "$INSTALL_BIN_DIR/agy.va39" ]]; then
+  rm -f "$INSTALL_BIN_DIR/agy" "$INSTALL_BIN_DIR/agy.va39"
+  die "Verification failed: binaries not found in $INSTALL_BIN_DIR"
+fi
+ok "Binary found"
+
+# ── Test & Extract Version ────────────────────────────────────────────────────
+VERSION=""
+if VERSION=$("$INSTALL_BIN_DIR/agy" --version 2>/dev/null); then
+  ok "Engine online ($VERSION verified)"
+  [[ -n "$AGY_BAK" && -f "$AGY_BAK" ]] && rm -f "$AGY_BAK"
+  [[ -n "$AGY_VA39_BAK" && -f "$AGY_VA39_BAK" ]] && rm -f "$AGY_VA39_BAK"
+else
+  rm -f "$INSTALL_BIN_DIR/agy" "$INSTALL_BIN_DIR/agy.va39"
+  die "Binaries failed to execute locally. Check dependencies."
+fi
+
+# ── Done ──────────────────────────────────────────────────────────────────────
+printf '\n%b\n' "${GREEN}${BOLD}Installation Complete.${RESET}"
+divider
+info "Installed binaries to: ${BOLD}${INSTALL_BIN_DIR}${RESET}"
+info "Release archive kept at: ${BOLD}${TMP}${RESET}"
+info "Optional verification:"
+info "${BOLD}cd $(dirname "$TMP") && gh attestation verify antigravity-termux-standalone.tar.gz -R wallentx/antigravity-cli-termux${RESET}"
+printf '\n'
+
+case ":$PATH:" in
+  *":$INSTALL_BIN_DIR:"*) ;;
+  *)
+    cat >&2 <<EOF
+${RED}${BOLD}Warning:${RESET} ${BOLD}$INSTALL_BIN_DIR${RESET} is not in PATH for this shell.
+Please add this to your shell profile (e.g., ~/.bashrc or ~/.zshrc):
+
+  export PATH="$INSTALL_BIN_DIR:\$PATH"
+
+EOF
+    ;;
+esac
+
+# ── Launch ────────────────────────────────────────────────────────────────────
+info "Launching Antigravity CLI..."
+
+export PATH="$INSTALL_BIN_DIR:$PATH"
+INSTALL_SUCCESS=1
+cleanup
+trap - EXIT
+
+if [[ "${AGY_INSTALL_SKIP_LAUNCH:-0}" == "1" ]]; then
+  ok "Launch skipped by AGY_INSTALL_SKIP_LAUNCH"
+  exit 0
+fi
+
+exec "$INSTALL_BIN_DIR/agy"

@@ -1,0 +1,27 @@
+# Build Outputs & Temporary Files
+bin/*
+staging/
+*.tar.gz
+
+# Local Application Settings & Sandboxes
+.antigravitycli/
+.scratch/
+.codegraph/
+
+# Local Editor Configurations
+.cursorrules
+
+# System Artifacts
+.DS_Store
+Thumbs.db
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Dynamic Loader & Interposer Bytes
+lib/libmmap_va39_fix.so
+lib/mmap_va39_fix_bytes.h
