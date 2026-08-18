@@ -1,6 +1,25 @@
 # Antigravity CLI Changelog
 
+<!-- disableFinding(LINE_OVER_80) -->
+
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
+
+## 1.1.14
+
+- Added a faster return path for enterprise sign-in, so a returning user is offered a single `Continue with ...` option naming the method they last used.
+- Added support for OAuth client ID metadata documents when connecting to an MCP server, so servers implementing that part of the specification no longer require a manually supplied client ID or dynamic client registration.
+- Improved the `/context` panel, which is now scrollable and sized to the terminal. `/usage` is sized the same way.
+- Improved markdown-defined agents with a single `inheritCustomizations` switch that decides whether the agent adopts your skills, rules, plugins, subagents and MCP servers, replacing per-kind defaults that silently disagreed with each other.
+- Improved the setting that allows access outside your workspace, which now grants only read access; writes are auto approved according to the cycle mode setting.
+- Fixed the CLI exiting silently when its language server failed, both at startup and while running; the failure is now printed to the terminal and the process exits non-zero instead of reporting success.
+- Fixed the sign-in URL and other links rendering as garbled text on terminals that do not parse OSC 8 hyperlinks, such as GNU `screen`, which are now detected and given plain text instead.
+- Fixed `Enter` being swallowed while the path-suggestion popup was still loading, which sent the prompt and then popped the results open on top of it.
+- Fixed the artifact list marking every earlier artifact as approved when reopened, so artifacts that were unreviewed, commented on or rejected in a previous turn keep their real status.
+- Fixed one malformed entry in your MCP configuration bringing down every other server, which is now logged and skipped so the remaining servers still load.
+- Fixed built-in skills, rules and plugins disappearing from an agent that set `inherit_user` to false, which was only meant to opt out of your personal customizations, not the ones shipped with the CLI.
+- Fixed reverting or branching a long conversation failing with `too many SQL variables`.
+- Fixed a long conversation's title jumping to an unrelated older message once history was truncated, by protecting the checkpoint the title is derived from.
+- Fixed a multi-line paste submitting one prompt per line on terminals that do not honour bracketed paste.
 
 ## 1.1.13
 
