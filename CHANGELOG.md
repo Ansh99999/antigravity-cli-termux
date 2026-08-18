@@ -6,7 +6,6 @@ The terminal-first surface to interact with Antigravity agents. Stay in your flo
 
 ## 1.1.14
 
-- Added `--input-format stream-json` to print mode, which reads newline-delimited JSON prompts from stdin and runs one turn per message against a single conversation, so a driver can hold a multi-turn session open instead of paying full startup, authentication and conversation setup for every turn.
 - Added a faster return path for enterprise sign-in, so a returning user is offered a single `Continue with ...` option naming the method they last used.
 - Added support for OAuth client ID metadata documents when connecting to an MCP server, so servers implementing that part of the specification no longer require a manually supplied client ID or dynamic client registration.
 - Improved the `/context` panel, which is now scrollable and sized to the terminal. `/usage` is sized the same way.
