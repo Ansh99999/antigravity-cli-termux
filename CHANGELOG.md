@@ -4,6 +4,23 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+## 1.1.15
+
+- Added `--input-format stream-json` to print mode, which reads newline-delimited JSON prompts from stdin and runs one turn per message in a single conversation, so a driver can keep a session open.
+- Added a `rules:` key to markdown agent frontmatter, so an agent can name rule files directly instead of inheriting your whole rule tree; a rule named this way always applies.
+- Added plugin support for a top-level `rules.json`, so a plugin can declare the rule files it ships the same way it already declares its skills.
+- Added a more specific hint on the spinner line, which now names the tool call the agent is currently running.
+- Fixed the CLI aborting at startup on hosts that preload their own allocator through `LD_PRELOAD`, such as Cloud TPU VM images, where it died before the interface appeared.
+- Fixed personal accounts hitting a resource-exhausted error at startup when saved credentials were restored from the system keyring, and cut the repeated account checks that followed.
+- Fixed your billing project, and the license tier it selects, being lost when the CLI restarted and restored saved credentials from the system keyring.
+- Fixed a spurious "Out of credits" message for enterprise users signed in through Application Default Credentials.
+- Fixed the `/model` picker cutting off models, and its own header, on terminals too short to show every model; the list now scrolls.
+- Fixed the `/model` picker misaligning its columns for model names that are not plain ASCII, by measuring column widths in display cells rather than bytes.
+- Fixed the spinner line flickering to a generic label between quick tool calls.
+- Fixed streamed text corrupting non-ASCII characters into replacement characters, in both the interactive display and `--output-format stream-json` text deltas.
+- Fixed artifacts written into a subdirectory of a conversation's artifact directory, such as `scratch/`, never appearing in the artifact list.
+- Fixed reading a `.wav` file failing as an unsupported media type, by normalizing non-canonical MIME types such as `audio/wave` before they reach the model.
+
 ## 1.1.14
 
 - Added a faster return path for enterprise sign-in, so a returning user is offered a single `Continue with ...` option naming the method they last used.
