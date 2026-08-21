@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/auxv.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #ifndef HWCAP_ATOMICS
@@ -16,6 +17,15 @@
 #ifndef AGY_TERMUX_VERSION
 #define AGY_TERMUX_VERSION "1.0.2"
 #endif
+
+#define AGY_LATEST_RELEASE_URL "https://github.com/wallentx/antigravity-cli-termux/releases/latest"
+#define AGY_RELEASE_TAG_URL_PREFIX                                                                 \
+    "https://github.com/wallentx/antigravity-cli-termux/releases/tag/"
+
+enum update_check_mode {
+    UPDATE_CHECK_EXPLICIT,
+    UPDATE_CHECK_STARTUP,
+};
 
 static int agy_is_valid_release_tag(const char *tag) {
     if (tag == NULL || tag[0] == '\0' || tag[0] == '-') {
@@ -31,13 +41,313 @@ static int agy_is_valid_release_tag(const char *tag) {
     return 1;
 }
 
+struct semantic_version {
+    unsigned long core[3];
+    const char *prerelease;
+    size_t prerelease_length;
+};
+
+struct version_identifier {
+    const char *start;
+    size_t length;
+    int numeric;
+};
+
+static int validate_version_identifier(int enforce_numeric_leading_zero, const char *start,
+                                       size_t length) {
+    int numeric = 1;
+
+    if (length == 0) {
+        return 0;
+    }
+
+    for (size_t index = 0; index < length; index++) {
+        unsigned char character = (unsigned char)start[index];
+        if (!isalnum(character) && character != '-') {
+            return 0;
+        }
+        if (!isdigit(character)) {
+            numeric = 0;
+        }
+    }
+
+    return !(enforce_numeric_leading_zero && numeric && length > 1 && start[0] == '0');
+}
+
+static int validate_identifier_list(int enforce_numeric_leading_zero, const char *start,
+                                    size_t length) {
+    size_t identifier_start = 0;
+
+    if (length == 0) {
+        return 0;
+    }
+
+    for (;;) {
+        size_t identifier_end = identifier_start;
+        while (identifier_end < length && start[identifier_end] != '.') {
+            identifier_end++;
+        }
+
+        if (!validate_version_identifier(enforce_numeric_leading_zero, start + identifier_start,
+                                         identifier_end - identifier_start)) {
+            return 0;
+        }
+        if (identifier_end == length) {
+            return 1;
+        }
+        identifier_start = identifier_end + 1;
+    }
+}
+
+static int parse_core_component(const char **cursor, unsigned long *value) {
+    if (!isdigit((unsigned char)**cursor)) {
+        return 0;
+    }
+    if (**cursor == '0' && isdigit((unsigned char)(*cursor)[1])) {
+        return 0;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    *value = strtoul(*cursor, &end, 10);
+    if (errno == ERANGE || end == *cursor) {
+        return 0;
+    }
+
+    *cursor = end;
+    return 1;
+}
+
+static int parse_semantic_version(const char *text, struct semantic_version *version) {
+    const char *cursor = text;
+
+    memset(version, 0, sizeof(*version));
+    if (*cursor == 'v') {
+        cursor++;
+    }
+
+    for (size_t component = 0; component < 3; component++) {
+        if (!parse_core_component(&cursor, &version->core[component])) {
+            return 0;
+        }
+        if (component == 2) {
+            break;
+        }
+        if (*cursor != '.') {
+            return 0;
+        }
+        cursor++;
+    }
+
+    if (*cursor == '-') {
+        const char *prerelease_start = ++cursor;
+        while (*cursor != '\0' && *cursor != '+') {
+            cursor++;
+        }
+        version->prerelease = prerelease_start;
+        version->prerelease_length = (size_t)(cursor - prerelease_start);
+        if (!validate_identifier_list(1, version->prerelease, version->prerelease_length)) {
+            return 0;
+        }
+    }
+
+    if (*cursor == '+') {
+        const char *build_start = ++cursor;
+        while (*cursor != '\0') {
+            cursor++;
+        }
+        if (!validate_identifier_list(0, build_start, (size_t)(cursor - build_start))) {
+            return 0;
+        }
+    }
+
+    return *cursor == '\0';
+}
+
+static struct version_identifier next_version_identifier(const char **cursor, size_t *remaining) {
+    struct version_identifier identifier = {
+        .start = *cursor,
+        .length = 0,
+        .numeric = 1,
+    };
+
+    while (identifier.length < *remaining && (*cursor)[identifier.length] != '.') {
+        if (!isdigit((unsigned char)(*cursor)[identifier.length])) {
+            identifier.numeric = 0;
+        }
+        identifier.length++;
+    }
+
+    size_t consumed = identifier.length;
+    if (consumed < *remaining) {
+        consumed++;
+    }
+    *cursor += consumed;
+    *remaining -= consumed;
+    return identifier;
+}
+
+static int compare_version_identifiers(const struct version_identifier *candidate,
+                                       const struct version_identifier *installed) {
+    if (candidate->numeric != installed->numeric) {
+        return candidate->numeric ? -1 : 1;
+    }
+
+    if (candidate->numeric && candidate->length != installed->length) {
+        return candidate->length < installed->length ? -1 : 1;
+    }
+
+    size_t common_length =
+        candidate->length < installed->length ? candidate->length : installed->length;
+    int lexical = memcmp(candidate->start, installed->start, common_length);
+    if (lexical != 0) {
+        return lexical < 0 ? -1 : 1;
+    }
+    if (candidate->length == installed->length) {
+        return 0;
+    }
+
+    return candidate->length < installed->length ? -1 : 1;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+static int compare_prerelease_versions(const struct semantic_version *candidate,
+                                       const struct semantic_version *installed) {
+    if (candidate->prerelease_length == 0 || installed->prerelease_length == 0) {
+        if (candidate->prerelease_length == installed->prerelease_length) {
+            return 0;
+        }
+        return candidate->prerelease_length == 0 ? 1 : -1;
+    }
+
+    const char *candidate_cursor = candidate->prerelease;
+    const char *installed_cursor = installed->prerelease;
+    size_t candidate_remaining = candidate->prerelease_length;
+    size_t installed_remaining = installed->prerelease_length;
+
+    while (candidate_remaining > 0 && installed_remaining > 0) {
+        struct version_identifier candidate_identifier =
+            next_version_identifier(&candidate_cursor, &candidate_remaining);
+        struct version_identifier installed_identifier =
+            next_version_identifier(&installed_cursor, &installed_remaining);
+        int comparison = compare_version_identifiers(&candidate_identifier, &installed_identifier);
+        if (comparison != 0) {
+            return comparison;
+        }
+    }
+
+    if (candidate_remaining == installed_remaining) {
+        return 0;
+    }
+    return candidate_remaining == 0 ? -1 : 1;
+}
+
+// Returns -1 when candidate is older, 0 when equal, 1 when newer, and -2 when invalid.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+static int compare_release_versions(const char *candidate_text, const char *installed_text) {
+    struct semantic_version candidate;
+    struct semantic_version installed;
+
+    if (!parse_semantic_version(candidate_text, &candidate) ||
+        !parse_semantic_version(installed_text, &installed)) {
+        return -2;
+    }
+
+    for (size_t component = 0; component < 3; component++) {
+        if (candidate.core[component] != installed.core[component]) {
+            return candidate.core[component] < installed.core[component] ? -1 : 1;
+        }
+    }
+
+    return compare_prerelease_versions(&candidate, &installed);
+}
+
 static void print_update_usage(void) {
     printf("Usage: agy update [options]\n\n"
            "Options:\n"
            "  -y, --yes, --auto  Apply updates without prompting\n"
            "  -h, --help         Show this help message\n\n"
            "Environment:\n"
-           "  AGY_AUTO_UPDATE=1  Apply updates without prompting\n");
+           "  AGY_AUTO_UPDATE=1   Apply updates without prompting\n"
+           "  AGY_UPDATE_DEBUG=1  Show startup update-check errors on stderr\n");
+}
+
+static int env_var_enabled(const char *name) {
+    const char *value = getenv(name);
+
+    return value != NULL && (strcmp(value, "1") == 0 || strcmp(value, "true") == 0);
+}
+
+static void report_update_check_error(enum update_check_mode mode, const char *message) {
+    if (mode == UPDATE_CHECK_EXPLICIT) {
+        printf("[agy-termux] Error: %s\n", message);
+    } else if (env_var_enabled("AGY_UPDATE_DEBUG")) {
+        (void)fprintf(stderr, "[agy-termux] Automatic update check failed: %s\n", message);
+    }
+}
+
+static int extract_release_tag(const char *release_url, char *tag, size_t tag_size) {
+    const size_t prefix_length = strlen(AGY_RELEASE_TAG_URL_PREFIX);
+    const char *tag_start = NULL;
+    size_t tag_length = 0;
+
+    if (strncmp(release_url, AGY_RELEASE_TAG_URL_PREFIX, prefix_length) != 0) {
+        return 0;
+    }
+
+    tag_start = release_url + prefix_length;
+    tag_length = strlen(tag_start);
+    if (tag_length == 0 || tag_length >= tag_size || !agy_is_valid_release_tag(tag_start)) {
+        return 0;
+    }
+
+    memcpy(tag, tag_start, tag_length + 1);
+    return 1;
+}
+
+static int fetch_latest_release_tag(enum update_check_mode mode, char *latest_tag,
+                                    size_t latest_tag_size) {
+    char command[768];
+    char release_url[PATH_MAX] = {0};
+    int written =
+        snprintf(command, sizeof(command),
+                 "command -v curl >/dev/null 2>&1 && "
+                 "curl --proto '=https' --tlsv1.2 --connect-timeout 2 --max-time 5 -fLsL "
+                 "-o /dev/null -w '%%{url_effective}\\n' -H 'User-Agent: Termux-Agy' '%s'",
+                 AGY_LATEST_RELEASE_URL);
+    if (written < 0 || written >= (int)sizeof(command)) {
+        report_update_check_error(mode, "could not construct the release query");
+        return 0;
+    }
+
+    // Intentionally uses the shell for a bounded curl request.
+    // NOLINTNEXTLINE(bugprone-command-processor,cert-env33-c)
+    FILE *pipe = popen(command, "r");
+    if (pipe == NULL) {
+        report_update_check_error(mode, "could not start the release query");
+        return 0;
+    }
+
+    int received_line = fgets(release_url, sizeof(release_url), pipe) != NULL;
+    int extra_output = received_line ? fgetc(pipe) : EOF;
+    int command_status = pclose(pipe);
+
+    if (command_status == -1 || !WIFEXITED(command_status) || WEXITSTATUS(command_status) != 0) {
+        report_update_check_error(mode, "GitHub release query did not succeed");
+        return 0;
+    }
+    if (!received_line || extra_output != EOF || strchr(release_url, '\n') == NULL) {
+        report_update_check_error(mode, "GitHub returned an unexpected release response");
+        return 0;
+    }
+
+    release_url[strcspn(release_url, "\r\n")] = '\0';
+    if (!extract_release_tag(release_url, latest_tag, latest_tag_size)) {
+        report_update_check_error(mode, "GitHub returned an unsupported release URL");
+        return 0;
+    }
+
+    return 1;
 }
 
 static int should_perform_update(int auto_update) {
@@ -81,93 +391,118 @@ static int should_perform_update(int auto_update) {
     }
 }
 
-// Helper to query your fork's latest release version via GitHub API and update in-place
-void check_and_perform_update(const char *dir, int auto_update) {
-    printf("[agy-termux] Querying latest release from wallentx/antigravity-cli-termux...\n");
-
-    // Formulate a secure curl command to query the GitHub Releases API
-    char cmd[512];
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+static int perform_transactional_update(const char *dir, const char *latest_tag) {
+    char update_cmd[8192];
     int written = snprintf(
-        cmd, sizeof(cmd),
-        "curl -fsSL -H \"User-Agent: Termux-Agy\" "
-        "https://api.github.com/repos/wallentx/antigravity-cli-termux/releases/latest | rg -o "
-        "'\"tag_name\"\\s*:\\s*\"[^\"]*' | cut -d'\"' -f4");
-    if (written < 0 || written >= (int)sizeof(cmd)) {
-        printf("[agy-termux] Error: Could not construct update check command.\n");
-        return;
+        update_cmd, sizeof(update_cmd),
+        "install_dir=\"%s\"; release_tag=\"%s\"; "
+        "tmp=$(mktemp -d \"${TMPDIR:-$install_dir/../tmp}/agy-update.XXXXXX\") "
+        "|| exit 1; "
+        "new_agy=\"$install_dir/.agy.new.$$\"; "
+        "new_payload=\"$install_dir/.agy.va39.new.$$\"; "
+        "old_agy=\"$install_dir/.agy.old.$$\"; "
+        "old_payload=\"$install_dir/.agy.va39.old.$$\"; "
+        "old_agy_part=\"$old_agy.part\"; old_payload_part=\"$old_payload.part\"; committed=0; "
+        "cleanup() { status=$?; trap - EXIT HUP INT TERM; rollback_failed=0; "
+        "if [ \"$committed\" -eq 0 ]; then "
+        "[ ! -e \"$old_agy\" ] || mv -f \"$old_agy\" \"$install_dir/agy\" || "
+        "rollback_failed=1; "
+        "[ ! -e \"$old_payload\" ] || "
+        "mv -f \"$old_payload\" \"$install_dir/agy.va39\" || rollback_failed=1; "
+        "fi; "
+        "rm -f \"$new_agy\" \"$new_payload\" \"$old_agy_part\" \"$old_payload_part\"; "
+        "rm -rf \"$tmp\"; "
+        "if [ \"$rollback_failed\" -ne 0 ]; then exit 125; fi; exit \"$status\"; }; "
+        "trap cleanup EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; "
+        "curl -fsSL -o \"$tmp/antigravity-termux-standalone.tar.gz\" "
+        "\"https://github.com/wallentx/antigravity-cli-termux/releases/download/"
+        "$release_tag/antigravity-termux-standalone.tar.gz\" && "
+        "tar -xzf \"$tmp/antigravity-termux-standalone.tar.gz\" -C \"$tmp\" "
+        "agy agy.va39 && "
+        "test -s \"$tmp/agy\" && test -x \"$tmp/agy\" && "
+        "test -s \"$tmp/agy.va39\" && test -x \"$tmp/agy.va39\" && "
+        "\"$tmp/agy\" --help >/dev/null 2>&1 && "
+        "install -m 0755 \"$tmp/agy\" \"$new_agy\" && "
+        "install -m 0755 \"$tmp/agy.va39\" \"$new_payload\" && "
+        "cp -p \"$install_dir/agy\" \"$old_agy_part\" && "
+        "mv -f \"$old_agy_part\" \"$old_agy\" && "
+        "cp -p \"$install_dir/agy.va39\" \"$old_payload_part\" && "
+        "mv -f \"$old_payload_part\" \"$old_payload\" && "
+        "mv -f \"$new_payload\" \"$install_dir/agy.va39\" && "
+        "mv -f \"$new_agy\" \"$install_dir/agy\" && "
+        "committed=1 && { rm -f \"$old_agy\" \"$old_payload\" || :; }",
+        dir, latest_tag);
+    if (written < 0 || written >= (int)sizeof(update_cmd)) {
+        return -1;
     }
 
-    // Intentionally uses the shell for the release-query pipeline.
-    // NOLINTNEXTLINE(bugprone-command-processor,cert-env33-c)
-    FILE *fp = popen(cmd, "r");
-    if (!fp) {
-        printf("[agy-termux] Error: Could not check for updates.\n");
-        return;
-    }
+    // Intentionally uses the shell for a staged, rollback-safe two-file replacement.
+    // NOLINTNEXTLINE(bugprone-command-processor,cert-env33-c,cert-err34-c,cert-str02-c)
+    return system(update_cmd);
+}
 
+// Query this fork's latest release and update the installed twin binaries in place.
+static void check_and_perform_update(enum update_check_mode mode, const char *dir,
+                                     int auto_update) {
     char latest_tag[64] = {0};
-    if (fgets(latest_tag, sizeof(latest_tag) - 1, fp) != NULL) {
-        // Strip trailing newline
-        latest_tag[strcspn(latest_tag, "\r\n")] = '\0';
+    if (mode == UPDATE_CHECK_EXPLICIT) {
+        printf("[agy-termux] Querying latest release from wallentx/antigravity-cli-termux...\n");
     }
-    pclose(fp);
-
-    if (strlen(latest_tag) == 0) {
-        printf("[agy-termux] Error: Failed to parse latest release tag from GitHub.\n");
-        return;
-    }
-    if (!agy_is_valid_release_tag(latest_tag)) {
-        printf("[agy-termux] Error: Latest release tag contains unsupported characters.\n");
+    if (!fetch_latest_release_tag(mode, latest_tag, sizeof(latest_tag))) {
         return;
     }
 
-    // Clean version representations (e.g. "v1.0.2" -> "1.0.2")
     const char *clean_latest = (latest_tag[0] == 'v') ? latest_tag + 1 : latest_tag;
     const char *clean_current =
         (AGY_TERMUX_VERSION[0] == 'v') ? &AGY_TERMUX_VERSION[1] : AGY_TERMUX_VERSION;
+    int version_comparison = compare_release_versions(clean_latest, clean_current);
 
-    printf("[agy-termux] Current standalone version: v%s\n", clean_current);
-    printf("[agy-termux] Latest available version : v%s\n", clean_latest);
+    if (mode == UPDATE_CHECK_EXPLICIT) {
+        printf("[agy-termux] Current standalone version: v%s\n", clean_current);
+        printf("[agy-termux] Latest available version : v%s\n", clean_latest);
+    }
 
-    if (strcmp(clean_latest, clean_current) != 0) {
-        printf("\n[agy-termux] A new update (v%s) is available!\n", clean_latest);
-
-        if (should_perform_update(auto_update)) {
-            printf("\n[agy-termux] Downloading and applying standalone update...\n");
-
-            // Runs a subshell command to download into a staging directory, then replace only
-            // the live twin binaries. Avoid extracting the archive over an existing bin symlink.
-            char update_cmd[2048];
-            written = snprintf(
-                update_cmd, sizeof(update_cmd),
-                "tmp=$(mktemp -d \"${TMPDIR:-%s/../tmp}/agy-update.XXXXXX\") && "
-                "trap 'rm -rf \"$tmp\"' EXIT && "
-                "curl -fsSL -o \"$tmp/antigravity-termux-standalone.tar.gz\" "
-                "\"https://github.com/wallentx/antigravity-cli-termux/releases/download/%s/"
-                "antigravity-termux-standalone.tar.gz\" && "
-                "tar -xzf \"$tmp/antigravity-termux-standalone.tar.gz\" -C \"$tmp\" "
-                "agy agy.va39 && "
-                "install -m 0755 \"$tmp/agy\" \"%s/agy\" && "
-                "install -m 0755 \"$tmp/agy.va39\" \"%s/agy.va39\"",
-                dir, latest_tag, dir, dir);
-            if (written < 0 || written >= (int)sizeof(update_cmd)) {
-                printf("[agy-termux] Error: Could not construct update command.\n");
-                return;
-            }
-
-            // Intentionally uses the shell so the update can run as one transactional command.
-            // NOLINTNEXTLINE(bugprone-command-processor,cert-env33-c,cert-err34-c,cert-str02-c)
-            int status = system(update_cmd);
-            if (status == 0) {
-                printf("[agy-termux] Update completed successfully! Please restart the CLI.\n");
+    if (version_comparison == -2) {
+        report_update_check_error(mode, "could not compare installed and available versions");
+        return;
+    }
+    if (version_comparison <= 0) {
+        if (mode == UPDATE_CHECK_EXPLICIT) {
+            if (version_comparison == 0) {
+                printf("[agy-termux] You are already up to date with the latest standalone "
+                       "release.\n");
             } else {
-                printf("[agy-termux] Error: Update failed during download or extraction.\n");
+                printf("[agy-termux] Installed version v%s is newer than latest release v%s; "
+                       "no update applied.\n",
+                       clean_current, clean_latest);
             }
-        } else {
-            printf("[agy-termux] Update cancelled.\n");
         }
+        return;
+    }
+
+    printf("\n[agy-termux] A new update (v%s) is available!\n", clean_latest);
+    if (!should_perform_update(auto_update)) {
+        printf("[agy-termux] Update cancelled.\n");
+        return;
+    }
+
+    printf("\n[agy-termux] Downloading and applying standalone update...\n");
+    int status = perform_transactional_update(dir, latest_tag);
+    if (status == 0) {
+        if (mode == UPDATE_CHECK_STARTUP) {
+            printf("[agy-termux] Update completed successfully. Starting the CLI...\n");
+        } else {
+            printf("[agy-termux] Update completed successfully! Please restart the CLI.\n");
+        }
+        return;
+    }
+
+    if (status != -1 && WIFEXITED(status) && WEXITSTATUS(status) == 125) {
+        printf("[agy-termux] Error: Update failed and rollback could not be completed.\n");
     } else {
-        printf("[agy-termux] You are already up to date with the latest standalone release.\n");
+        printf("[agy-termux] Error: Update failed; installed binaries were left unchanged or "
+               "restored.\n");
     }
 }
 
@@ -194,9 +529,7 @@ static int is_update_command(int argc, char **argv) {
 }
 
 static int env_requests_auto_update(void) {
-    const char *env_auto = getenv("AGY_AUTO_UPDATE");
-
-    return env_auto != NULL && (strcmp(env_auto, "1") == 0 || strcmp(env_auto, "true") == 0);
+    return env_var_enabled("AGY_AUTO_UPDATE");
 }
 
 static int handle_update_command(const char *dir, int argc, char **argv) {
@@ -212,8 +545,29 @@ static int handle_update_command(const char *dir, int argc, char **argv) {
         }
     }
 
-    check_and_perform_update(dir, auto_update);
+    check_and_perform_update(UPDATE_CHECK_EXPLICIT, dir, auto_update);
     return 0;
+}
+
+static int should_check_for_update_on_startup(int argc, char *const *argv) {
+    if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
+        return 0;
+    }
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0 ||
+            strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static void perform_startup_update_check(const char *dir, int argc, char **argv) {
+    if (should_check_for_update_on_startup(argc, argv)) {
+        check_and_perform_update(UPDATE_CHECK_STARTUP, dir, env_requests_auto_update());
+    }
 }
 
 static int is_native_termux(void) {
@@ -365,6 +719,8 @@ int main(int argc, char **argv) {
     if (!require_resolver_config(prefix_path)) {
         return 1;
     }
+
+    perform_startup_update_check(dir, argc, argv);
 
     // Use only the Termux glibc runtime libraries.
     written = snprintf(lib_path, sizeof(lib_path), "%s/glibc/lib", prefix_path);

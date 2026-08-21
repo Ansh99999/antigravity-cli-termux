@@ -57,7 +57,11 @@ curl -fsSL https://antigravity.google/cli/install.sh | bash
 ```
 
 #### 5. In-Place Self-Updating
-The C bootstrapper intercepts the `update` subcommand and queries this fork's GitHub Releases API, providing a seamless in-place update mechanism that updates both the patched engine and itself without needing complex wrappers or manually executing curl commands.
+The C bootstrapper intercepts the `update` subcommand and provides a seamless in-place update mechanism that updates both the patched engine and itself without needing complex wrappers or manually executing curl commands.
+
+Interactive launches also perform a silent, five-second-bounded release check. Nothing is printed when the installed release is current, newer than the published release, or GitHub cannot be reached. Only a strictly newer semantic version triggers the same install prompt as `agy update`.
+
+Before replacement, the updater stages and validates both binaries, then backs up the installed pair. Any failed replacement restores both originals. Startup continues whether the check or installation succeeds or fails. Set `AGY_UPDATE_DEBUG=1` to print suppressed startup-check errors to stderr.
 
 ---
 
