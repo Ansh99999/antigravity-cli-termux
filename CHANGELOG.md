@@ -4,6 +4,13 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+## 1.1.17
+
+- Improved the agent execution harness by consolidating onto a single execution path, giving more consistent tool, hook, and prompt behavior.
+- Fixed `/teamwork-preview` and some other slash commands disappearing for some users.
+- Fixed `Enter` not opening an active background task or subagent while the prompt was in Vim insert mode.
+- Fixed attaching Ogg audio and video files such as `.ogg`, `.opus` and `.ogv`, which the model rejected because they were sent as the generic `application/ogg`.
+
 ## 1.1.16
 
 - Added `mcp` subcommands (`add`, `remove`, `list`, `enable`, `disable`) for managing MCP servers in your user-level `mcp_config.json` without hand-editing it, covering both stdio and HTTP servers through `--type`, `--env` and `--header`.
