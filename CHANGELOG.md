@@ -4,6 +4,12 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+## 1.1.19
+
+- Fixed `--remote-control` refusing to start whenever port was taken, so it now takes a free port from the operating system.
+- Added the `AGY_CLI_HIDE_LOGO` environment variable for narrow terminals, screen readers and recordings where the banner's logo art gets in the way; setting it suppresses the art while keeping the version and account lines.
+- Added `AGY_CLI_DISABLE_ESCAPE_SEQUENCE_OPTIMIZATIONS` to bypass the renderer's dirty-rectangle and diffing optimizations.
+
 ## 1.1.18
 
 - Added support for passing a project name to `--project`, which previously accepted only a project ID and failed on anything else.
