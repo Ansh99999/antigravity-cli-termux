@@ -4,6 +4,21 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+## 1.1.18
+
+- Added support for passing a project name to `--project`, which previously accepted only a project ID and failed on anything else.
+- Added `item.rename` and `item.delete` keybindings for the conversation picker's rename and delete actions, so `f2` and `f4` can be rebound in `keybindings.json` on keyboards without function keys.
+- Improved `@` file path completion with a typo-tolerant fallback, so a query with a transposed or mistyped character still finds the file; typo matches never outrank exact ones.
+- Improved audio attachments by recognizing the standard formats Gemini models accept, including `wav`, `mp3`, `m4a`, `aac`, `flac` and `opus`, which were previously refused as unsupported.
+- Improved keystroke responsiveness on Windows by discarding the key-release events the console reports and nothing in the CLI reads, which were roughly doubling the rendering work per keystroke.
+- Improved the artifact viewer footer by moving the outline shortcut next to the scroll and page hints, so the three ways to move through a document read as one group.
+- Fixed print mode (`-p`) exiting successfully with an empty response when the agent state stream was dropped mid-run, which reported a failed turn as a clean success; it now surfaces the stream error and exits non-zero.
+- Fixed a valueless prompt flag swallowing the next flag as its prompt, so `--print --sandbox 'do the task'` no longer runs with the prompt `--sandbox` and the sandbox off; both that and a stray trailing argument are now errors.
+- Fixed an expanded `/btw` card pushing the footer hints and the prompt off-screen on a long answer, which is now clamped to the terminal height and scrollable with the arrow and page keys.
+- Fixed `/resume` opening below the fold instead of on the workspace you are working in, which happened whenever the CLI ran from a subdirectory of that workspace.
+- Fixed text losing its styling for the rest of a line after a file link, where the link's own reset also reset the surrounding prose.
+- Fixed a stray character appearing in the prompt every couple of seconds on terminals that print the CLI's periodic input-mode re-arming as literal text; the re-arm now happens only inside a terminal multiplexer, which is the only thing that resets those modes behind the CLI's back.
+
 ## 1.1.17
 
 - Improved the agent execution harness by consolidating onto a single execution path, giving more consistent tool, hook, and prompt behavior.
