@@ -4,6 +4,18 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+## 1.1.20
+
+- Added skill icon and visual branding support across the CLI, displaying emoji icons declared under `metadata.icon` in `SKILL.md` frontmatter across the `/skills` catalog list view, detail inspection headers, and slash command autocompletion popups, with proper multi-byte Unicode display width calculation to maintain terminal layout alignment.
+- Improved `@` file path autocompletion by indexing empty directories alongside files in ripgrep search results, allowing unpopulated and directory-only workspace structures to be discovered and traversed during path completion.
+- Improved permission management by automatically granting workspace-scoped read access under the default review mode, eliminating repetitive approval prompts for reading or listing files within the workspace root while strictly maintaining confirmation prompts for file modifications and external access.
+- Improved Git repository inspection performance by skipping recursive submodule worktree scans while continuing to track commit pointer updates to eliminate status latency in repositories with submodules.
+- Fixed print mode (`-p`/`--print`, including `--output-format json` and `stream-json`) treating benign tool execution errors and permission denials as fatal run failures with non-zero exit codes, ensuring headless exit codes reflect only cascade-level failures and match interactive session behavior.
+- Fixed the CLI overwriting and discarding unparsed configuration in `settings.json` when encountering an unrecognized setting value or syntax error on startup, preserving the existing configuration file on disk instead of saving a truncated version.
+- Fixed `/skills`, `/plugins`, `/agents`, and `/hooks` commands reporting that no customizations were found when invoked without an explicit agent configuration by mounting built-in customizations in listing views.
+- Fixed CJK draft jitter in the main prompt by normalizing boundary whitespace in streaming transcript updates, preventing unwanted spaces from being inserted characters.
+- Fixed the conversation spinner animation loop continuing to tick indefinitely in the background after turns completed, eliminating unnecessary CPU wakeups while the CLI is idle.
+
 ## 1.1.19
 
 - Fixed `--remote-control` refusing to start whenever port was taken, so it now takes a free port from the operating system.
