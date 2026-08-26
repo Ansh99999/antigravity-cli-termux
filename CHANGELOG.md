@@ -4,6 +4,20 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+## 1.1.21
+
+- Added `/voice` dictation, which transcribes speech straight into the prompt; press `f5` or run `/voice` to start and stop it, and use the `mic-serve` subcommand to forward a local microphone to a CLI running on another machine over SSH. Only one live dictation stream is allowed per account, and a second one now says so instead of reporting an exhausted quota.
+- Added a `cost` field to the status line data model, exposing the unrounded estimated cost of the current session so a custom status line can display running token spend.
+- Improved the agent's code search by running an embedded `ripgrep` binary instead of shelling out to whatever the machine provides, so searches are faster and behave identically on systems with no `ripgrep` installed.
+- Improved the `always-proceed` permission mode to auto-approve MCP tool calls and page reads as well, which kept prompting even though the mode exists to run without interruptions.
+- Improved allow-always permission suggestions for script runners such as `npm run`, `yarn`, `pnpm` and `cargo run` by pinning the specific script name, so approving `npm run dev` no longer grants every script in the project.
+- Improved conversation titles by generating them automatically when a conversation is created, so the resume picker shows a meaningful name instead of a placeholder from the first message.
+- Improved the error shown when an MCP server configured for Google credentials cannot find Application Default Credentials.
+- Fixed corrupted edits to files containing non-ASCII text such as CJK characters, accented letters or emoji, where an inexact match was spliced at the wrong offset and produced invalid UTF-8.
+- Fixed the session stalling mid-response when a tool result or file diff contained invalid UTF-8, which broke the agent state stream and left the interface waiting indefinitely.
+- Fixed a file write being reported as a failure after the content had already been written to disk, which sent the agent into unnecessary retries on large files such as notebooks.
+- Fixed explicitly configured skill and plugin paths losing to customizations discovered automatically nearby, so a path you set in your configuration now wins a name collision.
+
 ## 1.1.20
 
 - Added skill icon and visual branding support across the CLI, displaying emoji icons declared under `metadata.icon` in `SKILL.md` frontmatter across the `/skills` catalog list view, detail inspection headers, and slash command autocompletion popups, with proper multi-byte Unicode display width calculation to maintain terminal layout alignment.
