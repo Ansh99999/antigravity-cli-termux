@@ -4,6 +4,20 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+## 1.1.22
+
+- Added a `/model <name>` argument that switches to a model by name, slug or label and saves it as your default in one step, with the rest of the first matching name offered as ghost text while you type; `/model` on its own still opens the picker, and an unrecognized name prints the valid ones.
+- Improved the `/effort` hint so it completes what you have actually typed instead of always showing a fixed `[low|medium|high]` placeholder.
+- Improved artifact handling in conversations that produce many files by coalescing bursts of filesystem events into a single rescan.
+- Fixed selectable reasoning effort for Gemini 3.1 Pro and Gemini 3.5 Flash when you authenticate with a Gemini API key.
+- Fixed the interface redrawing continuously while the tasks panel or a subagent detail panel was open with nothing running, which held process CPU near 32% instead of the roughly 10% it now settles at.
+- Fixed a running subagent's elapsed timer freezing on screen whenever the parent agent was itself waiting.
+- Fixed an HTTP 502 from the model endpoint ending the whole run instead of being retried, so a transient bad gateway is now treated as the temporary outage it is.
+- Fixed a `self` subagent launched from a conversation with no recorded agent configuration re-resolving its setup from scratch and drifting from its parent, most visibly by running interactively when the parent was in autonomous mode.
+- Fixed file deletions failing on Windows with a sharing violation while another process still held the file open, which is now retried with backoff for about a second before reporting failure.
+- Fixed headless daemon printing an `Open in your browser: http://localhost:<port>` line in its startup banner, which was never a supported way to connect and, under a service manager, was written to the log on every restart.
+- Fixed the built-in `migrate-workflows` skill assuming POSIX home directories and path separators, so it now resolves and reports paths correctly on Windows.
+
 ## 1.1.21
 
 - Added `/voice` dictation, which transcribes speech straight into the prompt; press `f5` or run `/voice` to start and stop it, and use the `mic-serve` subcommand to forward a local microphone to a CLI running on another machine over SSH. Only one live dictation stream is allowed per account, and a second one now says so instead of reporting an exhausted quota.
