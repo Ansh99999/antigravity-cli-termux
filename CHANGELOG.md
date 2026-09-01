@@ -4,6 +4,22 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+## 1.1.23
+
+- Improved `/model <name>` autocompletion to accept the proposed model name ghost text with `Tab`.
+- Reduced subagent streaming overhead by sending subagent trajectory metadata once per subtrajectory instead of with every step.
+- Fixed commands with subcommands (such as `models` or `agents`) hanging on an inherited, unclosed standard input pipe instead of executing immediately.
+- Fixed CLI crashes caused by prompt hooks by catching hook panics and rejecting nil completion configurations in model requests.
+- Fixed tool invocations and results omitting tool-call IDs when reconstructing request history for Gemini models.
+- Fixed tool permission prompts for direct and MCP tool calls displaying generic prompt titles instead of their declared human-readable action descriptions.
+- Fixed unconfigured or interrupted Google Cloud authentication and onboarding sessions dropping into broken chat sessions instead of prompting with the sign-in screen.
+- Fixed transient authentication errors caused by token expiry clock skew by proactively refreshing browser and WIF OAuth tokens five minutes before expiration.
+- Fixed instructional cycle mode placeholders reappearing in the input prompt after typing and clearing content.
+- Fixed subagents defined with `enable_mcp_tools=true` failing with unknown tool errors by ensuring the MCP dispatcher meta-tool is available to the subagent executor.
+- Fixed prompts entered immediately after login being discarded with an account verification alert by queueing them until background eligibility verification completes.
+- Fixed cancelled or killed subagents remaining stuck in the "Running" state in the UI task drawer across ancestor conversations.
+- Fixed parsing MCP JSON configuration files on Windows when saved with a UTF-8 byte order mark (BOM).
+
 ## 1.1.22
 
 - Added a `/model <name>` argument that switches to a model by name, slug or label and saves it as your default in one step, with the rest of the first matching name offered as ghost text while you type; `/model` on its own still opens the picker, and an unrecognized name prints the valid ones.
