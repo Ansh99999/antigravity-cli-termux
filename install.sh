@@ -2,7 +2,11 @@
 # Antigravity - Termux Installer
 set -Eeuo pipefail
 
-REPO="${AGY_REPO:-wallentx/antigravity-cli-termux}"
+# This fork's installer installs this fork's release, so that fetching the script
+# from here and running it does what it looks like it does. AGY_REPO still points
+# it anywhere else — AGY_REPO=wallentx/antigravity-cli-termux installs upstream's
+# build. (This default is the one line an upstream pull request would drop.)
+REPO="${AGY_REPO:-Ansh99999/antigravity-cli-termux}"
 URL="${AGY_INSTALL_URL:-https://github.com/$REPO/releases/latest/download/antigravity-termux-standalone.tar.gz}"
 
 # ── Environment Detection ─────────────────────────────────────────────────────
@@ -356,7 +360,7 @@ divider
 info "Installed binaries to: ${BOLD}${INSTALL_BIN_DIR}${RESET}"
 info "Release archive kept at: ${BOLD}${TMP}${RESET}"
 info "Optional verification:"
-info "${BOLD}cd $(dirname "$TMP") && gh attestation verify antigravity-termux-standalone.tar.gz -R wallentx/antigravity-cli-termux${RESET}"
+info "${BOLD}cd $(dirname "$TMP") && gh attestation verify antigravity-termux-standalone.tar.gz -R ${REPO}${RESET}"
 printf '\n'
 
 case ":$PATH:" in

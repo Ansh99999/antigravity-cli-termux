@@ -18,9 +18,21 @@
 #define AGY_TERMUX_VERSION "1.0.2"
 #endif
 
-#define AGY_LATEST_RELEASE_URL "https://github.com/wallentx/antigravity-cli-termux/releases/latest"
-#define AGY_RELEASE_TAG_URL_PREFIX                                                                 \
-    "https://github.com/wallentx/antigravity-cli-termux/releases/tag/"
+// AGY_UPDATE_REPO is the repository this build updates itself from. It is a
+// compile-time macro because a build installed from a fork has to follow that
+// fork's releases: were this fixed at the canonical repo, `agy update` on a fork
+// build would quietly replace it with an archive that does not contain the same
+// binaries. build.sh sets it, defaulting to the canonical repo.
+#ifndef AGY_UPDATE_REPO
+#define AGY_UPDATE_REPO "wallentx/antigravity-cli-termux"
+#endif
+
+#define AGY_RELEASE_URL_BASE "https://github.com/" AGY_UPDATE_REPO "/releases"
+#define AGY_LATEST_RELEASE_URL AGY_RELEASE_URL_BASE "/latest"
+#define AGY_RELEASE_TAG_URL_PREFIX AGY_RELEASE_URL_BASE "/tag/"
+#define AGY_RELEASE_DOWNLOAD_URL_PREFIX AGY_RELEASE_URL_BASE "/download/"
+#define AGY_INSTALL_SCRIPT_URL                                                                     \
+    "https://raw.githubusercontent.com/" AGY_UPDATE_REPO "/dev/install.sh"
 
 enum update_check_mode {
     UPDATE_CHECK_EXPLICIT,
@@ -393,7 +405,7 @@ static int should_perform_update(int auto_update) {
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 static int perform_transactional_update(const char *dir, const char *latest_tag) {
-    char update_cmd[8192];
+    char update_cmd[16384];
     int written = snprintf(
         update_cmd, sizeof(update_cmd),
         "install_dir=\"%s\"; release_tag=\"%s\"; "
@@ -401,43 +413,72 @@ static int perform_transactional_update(const char *dir, const char *latest_tag)
         "|| exit 1; "
         "new_agy=\"$install_dir/.agy.new.$$\"; "
         "new_payload=\"$install_dir/.agy.va39.new.$$\"; "
+        "new_helper=\"$install_dir/.agy-provider.new.$$\"; "
         "old_agy=\"$install_dir/.agy.old.$$\"; "
         "old_payload=\"$install_dir/.agy.va39.old.$$\"; "
-        "old_agy_part=\"$old_agy.part\"; old_payload_part=\"$old_payload.part\"; committed=0; "
+        "old_helper=\"$install_dir/.agy-provider.old.$$\"; "
+        "old_agy_part=\"$old_agy.part\"; old_payload_part=\"$old_payload.part\"; "
+        "old_helper_part=\"$old_helper.part\"; committed=0; had_helper=0; staged_helper=0; "
+        "[ ! -e \"$install_dir/agy-provider\" ] || had_helper=1; "
         "cleanup() { status=$?; trap - EXIT HUP INT TERM; rollback_failed=0; "
         "if [ \"$committed\" -eq 0 ]; then "
         "[ ! -e \"$old_agy\" ] || mv -f \"$old_agy\" \"$install_dir/agy\" || "
         "rollback_failed=1; "
         "[ ! -e \"$old_payload\" ] || "
         "mv -f \"$old_payload\" \"$install_dir/agy.va39\" || rollback_failed=1; "
+        "if [ -e \"$old_helper\" ]; then "
+        "mv -f \"$old_helper\" \"$install_dir/agy-provider\" || rollback_failed=1; "
+        "elif [ \"$had_helper\" -eq 0 ]; then "
+        "rm -f \"$install_dir/agy-provider\" || rollback_failed=1; "
         "fi; "
-        "rm -f \"$new_agy\" \"$new_payload\" \"$old_agy_part\" \"$old_payload_part\"; "
+        "fi; "
+        "rm -f \"$new_agy\" \"$new_payload\" \"$new_helper\" \"$old_agy_part\" "
+        "\"$old_payload_part\" \"$old_helper_part\"; "
         "rm -rf \"$tmp\"; "
         "if [ \"$rollback_failed\" -ne 0 ]; then exit 125; fi; exit \"$status\"; }; "
         "trap cleanup EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; "
         "curl -fsSL -o \"$tmp/antigravity-termux-standalone.tar.gz\" "
-        "\"https://github.com/wallentx/antigravity-cli-termux/releases/download/"
+        "\"" AGY_RELEASE_DOWNLOAD_URL_PREFIX
         "$release_tag/antigravity-termux-standalone.tar.gz\" && "
         "tar -xzf \"$tmp/antigravity-termux-standalone.tar.gz\" -C \"$tmp\" "
         "agy agy.va39 && "
+        // The helper is extracted tolerantly and skipped when absent, so an
+        // update onto a release built before it existed still applies.
+        "{ tar -xzf \"$tmp/antigravity-termux-standalone.tar.gz\" -C \"$tmp\" "
+        "agy-provider 2>/dev/null || :; } && "
         "test -s \"$tmp/agy\" && test -x \"$tmp/agy\" && "
         "test -s \"$tmp/agy.va39\" && test -x \"$tmp/agy.va39\" && "
         "\"$tmp/agy\" --help >/dev/null 2>&1 && "
         "install -m 0755 \"$tmp/agy\" \"$new_agy\" && "
         "install -m 0755 \"$tmp/agy.va39\" \"$new_payload\" && "
+        // A helper that will not run is treated exactly like one that is not in
+        // the archive: the engine update still applies and whatever helper is
+        // installed stays. Failing the whole update here would let one bad
+        // helper build block engine updates entirely, and install.sh already
+        // takes this line ("the CLI is unaffected").
+        "{ [ ! -s \"$tmp/agy-provider\" ] || "
+        "{ install -m 0755 \"$tmp/agy-provider\" \"$new_helper\" && "
+        "\"$new_helper\" --version >/dev/null 2>&1 && staged_helper=1; } || "
+        "{ rm -f \"$new_helper\"; echo \"[agy-termux] The updated agy-provider helper "
+        "would not run; keeping the installed one.\"; }; } && "
         "cp -p \"$install_dir/agy\" \"$old_agy_part\" && "
         "mv -f \"$old_agy_part\" \"$old_agy\" && "
         "cp -p \"$install_dir/agy.va39\" \"$old_payload_part\" && "
         "mv -f \"$old_payload_part\" \"$old_payload\" && "
+        "{ [ \"$staged_helper\" -eq 0 ] || [ \"$had_helper\" -eq 0 ] || "
+        "{ cp -p \"$install_dir/agy-provider\" \"$old_helper_part\" && "
+        "mv -f \"$old_helper_part\" \"$old_helper\"; }; } && "
         "mv -f \"$new_payload\" \"$install_dir/agy.va39\" && "
         "mv -f \"$new_agy\" \"$install_dir/agy\" && "
-        "committed=1 && { rm -f \"$old_agy\" \"$old_payload\" || :; }",
+        "{ [ \"$staged_helper\" -eq 0 ] || "
+        "mv -f \"$new_helper\" \"$install_dir/agy-provider\"; } && "
+        "committed=1 && { rm -f \"$old_agy\" \"$old_payload\" \"$old_helper\" || :; }",
         dir, latest_tag);
     if (written < 0 || written >= (int)sizeof(update_cmd)) {
         return -1;
     }
 
-    // Intentionally uses the shell for a staged, rollback-safe two-file replacement.
+    // Intentionally uses the shell for a staged, rollback-safe replacement.
     // NOLINTNEXTLINE(bugprone-command-processor,cert-env33-c,cert-err34-c,cert-str02-c)
     return system(update_cmd);
 }
@@ -447,7 +488,7 @@ static void check_and_perform_update(enum update_check_mode mode, const char *di
                                      int auto_update) {
     char latest_tag[64] = {0};
     if (mode == UPDATE_CHECK_EXPLICIT) {
-        printf("[agy-termux] Querying latest release from wallentx/antigravity-cli-termux...\n");
+        printf("[agy-termux] Querying latest release from %s...\n", AGY_UPDATE_REPO);
     }
     if (!fetch_latest_release_tag(mode, latest_tag, sizeof(latest_tag))) {
         return;
@@ -562,8 +603,7 @@ static int handle_provider_command(const char *dir, int argc, char **argv) {
         (void)fprintf(stderr, "[agy-termux] %s is not installed next to agy.\n",
                       AGY_PROVIDER_BINARY);
         (void)fprintf(stderr, "[agy-termux] Reinstall to add it: "
-                              "curl -fsSL https://raw.githubusercontent.com/"
-                              "wallentx/antigravity-cli-termux/dev/install.sh | bash\n");
+                              "curl -fsSL " AGY_INSTALL_SCRIPT_URL " | bash\n");
         return 1;
     }
 

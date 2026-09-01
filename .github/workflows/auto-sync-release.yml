@@ -129,6 +129,8 @@ jobs:
         env:
           AGY_VERSION: ${{ steps.check_version.outputs.version }}
           AGY_REQUIRE_PROVIDER: '1'
+          # A release updates itself from the repository that published it.
+          AGY_UPDATE_REPO: ${{ github.repository }}
         run: |
           ./build.sh
 

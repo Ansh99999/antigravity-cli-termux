@@ -21,6 +21,7 @@ jobs:
       c_format: ${{ steps.c_format.outputs.should_run }}
       c_static: ${{ steps.c_static.outputs.should_run }}
       termux_compile: ${{ steps.termux_compile.outputs.should_run }}
+      update_harness: ${{ steps.update_harness.outputs.should_run }}
       build_package: ${{ steps.build_package.outputs.should_run }}
       installer_smoke: ${{ steps.installer_smoke.outputs.should_run }}
       go_check: ${{ steps.go_check.outputs.should_run }}
@@ -49,6 +50,10 @@ jobs:
       - name: Strict Termux Clang Compile Paths
         id: termux_compile
         run: .github/scripts/ci-should-run.py termux-compile
+
+      - name: Update Logic Harness Paths
+        id: update_harness
+        run: .github/scripts/ci-should-run.py update-harness
 
       - name: Termux Build and Package Paths
         id: build_package
@@ -104,6 +109,28 @@ jobs:
             go build -trimpath -ldflags "-s -w" -o /tmp/agy-provider ./cmd/agy-provider
           file /tmp/agy-provider
           readelf -h /tmp/agy-provider | grep -F 'DYN (Position-Independent Executable file)'
+
+  update-harness:
+    name: Update Logic
+    needs: changes
+    if: ${{ needs.changes.outputs.update_harness == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Drive the real update through a fake curl
+        # Builds the bootstrapper for this runner and exercises the staging,
+        # commit and rollback path, including how agy-provider is carried. The
+        # fixture archive's members are scripts, so the host architecture does
+        # not matter and nothing here reaches the network.
+        run: ./scripts/update-harness.sh
 
   c-format-and-tidy:
     name: C Format and Tidy

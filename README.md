@@ -5,8 +5,13 @@
 ## 🚀 Quick Start (Termux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wallentx/antigravity-cli-termux/dev/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Ansh99999/antigravity-cli-termux/dev/install.sh | bash
 ```
+
+This fork's release carries the `agy provider` helper as well as the CLI, and an
+installed build updates itself from this fork. To install the upstream Termux
+port instead, run the same script with
+`AGY_REPO=wallentx/antigravity-cli-termux`.
 
 ![Antigravity CLI Demo](antigravity.gif)
 
@@ -61,7 +66,16 @@ The C bootstrapper intercepts the `update` subcommand and provides a seamless in
 
 Interactive launches also perform a silent, five-second-bounded release check. Nothing is printed when the installed release is current, newer than the published release, or GitHub cannot be reached. Only a strictly newer semantic version triggers the same install prompt as `agy update`.
 
-Before replacement, the updater stages and validates both binaries, then backs up the installed pair. Any failed replacement restores both originals. Startup continues whether the check or installation succeeds or fails. Set `AGY_UPDATE_DEBUG=1` to print suppressed startup-check errors to stderr.
+Before replacement, the updater stages and validates the binaries, then backs up
+what is installed. Any failed replacement restores the originals, and no staging
+files are left behind. The `agy-provider` helper is carried in the same
+transaction, tolerantly on both ends: an archive that predates it still applies,
+and a helper that will not run leaves the installed one in place rather than
+blocking the engine update. A build updates itself from the repository it was
+built from — `AGY_UPDATE_REPO` at compile time, which the release workflow sets
+to its own repository — so a fork's build follows the fork's releases. Startup
+continues whether the check or installation succeeds or fails. Set
+`AGY_UPDATE_DEBUG=1` to print suppressed startup-check errors to stderr.
 
 ---
 
@@ -101,7 +115,7 @@ Antigravity CLI brings the core capabilities of Antigravity 2.0 (multi-step reas
 
 ### Android (Termux)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wallentx/antigravity-cli-termux/dev/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Ansh99999/antigravity-cli-termux/dev/install.sh | bash
 ```
 
 ### macOS / Linux

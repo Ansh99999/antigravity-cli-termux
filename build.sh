@@ -40,6 +40,8 @@ Arguments:
 Environment:
   AGY_VERSION                      Version to embed when building from a local binary.
                                    Required if that binary cannot run on this host.
+  AGY_UPDATE_REPO                  owner/name the built binary updates itself from.
+                                   Defaults to wallentx/antigravity-cli-termux.
   AGY_REQUIRE_PROVIDER=1           Fail instead of warning when the provider helper
                                    cannot be built (what CI sets, so a release is
                                    never published without it).
@@ -234,9 +236,14 @@ print(f"Patched parameters: ubfx={ubfx_count}, lsl={lsl_count}, mask={mask_count
 PY
 ok "Patched binary generated: bin/agy.va39"
 
-# Compile the native Termux C bootstrapper.
-info "Compiling native Termux C bootstrapper..."
-if ! "$local_cc" -O2 -DAGY_TERMUX_VERSION="\"$latest_version\"" -o bin/agy lib/agy_helper.c; then
+# Compile the native Termux C bootstrapper. AGY_UPDATE_REPO decides which
+# repository the built binary updates itself from: a build published by a fork has
+# to follow that fork's releases, or `agy update` would replace it with an archive
+# built from different source. CI passes its own repository.
+update_repo="${AGY_UPDATE_REPO:-wallentx/antigravity-cli-termux}"
+info "Compiling native Termux C bootstrapper (updates from $update_repo)..."
+if ! "$local_cc" -O2 -DAGY_TERMUX_VERSION="\"$latest_version\"" \
+    -DAGY_UPDATE_REPO="\"$update_repo\"" -o bin/agy lib/agy_helper.c; then
   die "Compilation of lib/agy_helper.c failed."
 fi
 

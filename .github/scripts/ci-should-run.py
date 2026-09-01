@@ -90,6 +90,15 @@ def termux_compile_path(path: str) -> bool:
     return is_c_source(path) or is_pr_workflow(path) or is_termux_helper(path)
 
 
+def update_harness_path(path: str) -> bool:
+    return (
+        is_c_source(path)
+        or path == "scripts/update-harness.sh"
+        or is_pr_workflow(path)
+        or is_termux_helper(path)
+    )
+
+
 def build_package_path(path: str) -> bool:
     return (
         path == "build.sh"
@@ -120,6 +129,7 @@ PREDICATES = {
     "c-format": c_format_path,
     "c-static": c_static_path,
     "termux-compile": termux_compile_path,
+    "update-harness": update_harness_path,
     "build-package": build_package_path,
     "installer-smoke": installer_smoke_path,
     "shellcheck": shellcheck_path,

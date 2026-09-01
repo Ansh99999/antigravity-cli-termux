@@ -1,0 +1,325 @@
+name: Fork Release
+
+# Publishes this fork's own standalone archive, so that install.sh's
+# releases/latest URL and the bootstrapper's own `agy update` both serve the build
+# that contains `agy provider`.
+#
+# Upstream's auto-sync-release.yml syncs against google-antigravity/antigravity-cli
+# and is left alone. This one tracks wallentx/antigravity-cli-termux instead, which
+# is where the bootstrapper and the packaging actually live, so a scheduled run
+# picks up the port's fixes as well as a new engine version.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sync_upstream:
+        description: "Merge wallentx/antigravity-cli-termux dev into dev first"
+        type: boolean
+        default: true
+      skip_smoke:
+        description: "Publish without the Termux arm64 smoke test"
+        type: boolean
+        default: false
+  schedule:
+    # Every six hours, off the hour on purpose.
+    - cron: '23 */6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout dev
+        uses: actions/checkout@v7
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Merge the Termux port's dev into ours
+        if: github.event_name == 'schedule' || inputs.sync_upstream
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add port https://github.com/wallentx/antigravity-cli-termux.git 2>/dev/null ||
+            git remote set-url port https://github.com/wallentx/antigravity-cli-termux.git
+          git fetch port dev
+
+          read -r behind ahead < <(git rev-list --left-right --count port/dev...HEAD)
+          echo "dev is $behind commits behind and $ahead commits ahead of the port's dev."
+
+          if [[ "$behind" == "0" ]]; then
+            echo "Already caught up."
+            exit 0
+          fi
+
+          # A conflict here needs a person: this fork deliberately diverges in
+          # install.sh (which release it installs) and in lib/agy_helper.c.
+          if ! git merge --no-edit port/dev; then
+            echo "::error::Merging the port's dev conflicted. Resolve it locally and push." >&2
+            exit 1
+          fi
+          git push origin HEAD:dev
+
+      - name: Resolve the engine version
+        id: version
+        run: |
+          manifest=$(curl -fsSL "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json")
+          version=$(jq -er .version <<<"$manifest")
+          printf 'version=%s\n' "$version" >>"$GITHUB_OUTPUT"
+          printf 'Engine version: %s\n' "$version"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: provider/go.mod
+          # The helper has no dependencies, so there is no go.sum to cache from.
+          cache: false
+
+      - name: Test the provider helper
+        working-directory: provider
+        run: |
+          gofmt -l . | tee /tmp/gofmt.out
+          test ! -s /tmp/gofmt.out
+          go vet ./...
+          go test ./...
+
+      - name: Test the update logic
+        # Builds the bootstrapper for this x86 runner and drives the real
+        # `agy update` through a fake curl, so the staging/rollback path and the
+        # agy-provider handling are covered before a release goes out.
+        run: ./scripts/update-harness.sh
+
+      - name: Build the standalone binaries
+        env:
+          AGY_VERSION: ${{ steps.version.outputs.version }}
+          AGY_REQUIRE_PROVIDER: '1'
+          # What the built binary updates itself from. Without this a fork build
+          # would update to upstream's archive, which has no provider helper in it.
+          AGY_UPDATE_REPO: ${{ github.repository }}
+        run: ./build.sh
+
+      - name: Check the helper is position-independent
+        run: |
+          # Android will not start an ET_EXEC binary; only the android target is
+          # PIE by default, so this is the assertion that catches a wrong GOOS.
+          readelf -h bin/agy-provider
+          readelf -h bin/agy-provider | grep -F 'DYN (Position-Independent Executable file)'
+          readelf -h bin/agy | head -20
+
+      - name: Package the archive
+        run: |
+          tar -czf antigravity-termux-standalone.tar.gz -C bin agy agy.va39 agy-provider
+          tar -tzf antigravity-termux-standalone.tar.gz
+
+      - name: Upload the archive and the installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: standalone-${{ steps.version.outputs.version }}
+          path: |
+            antigravity-termux-standalone.tar.gz
+            install.sh
+          if-no-files-found: error
+
+  smoke:
+    name: Termux Smoke Test
+    needs: build
+    if: ${{ !inputs.skip_smoke }}
+    permissions:
+      actions: read
+      contents: read
+    uses: wallentx/gh-actions/.github/workflows/termux-run.yml@main
+    with:
+      packages: |
+        ca-certificates
+        curl
+        tar
+        glibc
+        glibc-runner
+        resolv-conf
+      copy-paths: |
+        artifact
+      env: |
+        AGY_EXPECTED_VERSION=${{ needs.build.outputs.version }}
+        ARTIFACT_NAME=standalone-${{ needs.build.outputs.version }}
+      host-commands: |
+        set -Eeuo pipefail
+
+        rm -rf artifact
+        mkdir -p artifact
+        gh run download "$GITHUB_RUN_ID" \
+          --repo "$GITHUB_REPOSITORY" \
+          --name "$ARTIFACT_NAME" \
+          --dir artifact
+
+        test -f artifact/antigravity-termux-standalone.tar.gz
+        test -f artifact/install.sh
+        tar -tzf artifact/antigravity-termux-standalone.tar.gz
+      commands: |
+        set -Eeuo pipefail
+
+        export TERMUX_VERSION="${TERMUX_VERSION:-ci}"
+
+        # Installing from the local archive rather than the release, since the
+        # release being tested is the one this run is about to publish.
+        AGY_INSTALL_URL="file://$PWD/artifact/antigravity-termux-standalone.tar.gz" \
+        AGY_INSTALL_SKIP_LAUNCH=1 \
+          bash artifact/install.sh
+
+        test -x "$PREFIX/bin/agy"
+        test -x "$PREFIX/bin/agy.va39"
+        test -x "$PREFIX/bin/agy-provider"
+
+        version_output=$("$PREFIX/bin/agy" --version)
+        printf 'agy version: %s\n' "$version_output"
+        printf '%s\n' "$version_output" | grep -F "$AGY_EXPECTED_VERSION" >/dev/null
+
+        "$PREFIX/bin/agy" --help >/dev/null
+
+        # `agy provider` reaches the helper through the bootstrapper, so this
+        # exercises the interception rather than just the helper.
+        export AGY_PROVIDER_HOME="$PWD/agy-provider-home"
+        export AGY_CLI_SETTINGS="$PWD/agy-cli-settings.json"
+
+        "$PREFIX/bin/agy" provider --help >/dev/null
+        "$PREFIX/bin/agy" provider list | grep -F "No providers configured" >/dev/null
+
+        "$PREFIX/bin/agy" provider add \
+          --no-prompt --name smoke --kind openai \
+          --base-url https://api.example.invalid/v1 \
+          --key sk-smoke-not-a-real-key --model demo-model >/dev/null
+
+        "$PREFIX/bin/agy" provider list | grep -F smoke >/dev/null
+        "$PREFIX/bin/agy" provider status | grep -F 'modelProvider = gemini' >/dev/null
+
+        # A host that does not resolve must still produce an environment and a
+        # live proxy: the engine has to start regardless.
+        env_lines=$("$PREFIX/bin/agy-provider" up)
+        printf 'launch environment:\n%s\n' "$env_lines"
+        printf '%s\n' "$env_lines" | grep -E '^GEMINI_API_KEY=agy-' >/dev/null
+
+        port=$(printf '%s\n' "$env_lines" | sed -n 's|^GOOGLE_GEMINI_BASE_URL=http://127\.0\.0\.1:||p')
+        curl -fsS "http://127.0.0.1:$port/__agy/health" | grep -F '"provider":"smoke"' >/dev/null
+
+        "$PREFIX/bin/agy" provider stop | grep -F 'stopped' >/dev/null
+        "$PREFIX/bin/agy" provider use none >/dev/null
+        test -z "$("$PREFIX/bin/agy-provider" up)"
+
+        "$PREFIX/bin/agy" provider install-skill >/dev/null
+        test -f "$HOME/.gemini/antigravity-cli/skills/provider.md"
+
+  publish:
+    name: Publish
+    needs:
+      - build
+      - smoke
+    # smoke is skipped, not failed, when skip_smoke is set, and a skipped
+    # dependency would otherwise skip this job too.
+    if: >-
+      always() && needs.build.result == 'success' &&
+      (needs.smoke.result == 'success' || needs.smoke.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # What `gh attestation verify` needs to have something to check, which is
+      # the command install.sh prints when it finishes.
+      id-token: write
+      attestations: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Download the archive
+        uses: actions/download-artifact@v8
+        with:
+          name: standalone-${{ needs.build.outputs.version }}
+          path: .
+
+      - name: Attest the archive
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: antigravity-termux-standalone.tar.gz
+
+      - name: Create or refresh the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          tag="v$VERSION"
+          test -f antigravity-termux-standalone.tar.gz
+
+          cat >release-notes.md <<EOF
+          Engine v$VERSION, built from this fork's \`dev\`.
+
+          Includes \`agy provider\`: custom OpenAI-, Anthropic- or Gemini-shaped
+          endpoints, model discovery, several keys with a rotation strategy, and the
+          translating proxy that lets a non-Gemini host answer a CLI that only knows
+          how to ask Google.
+
+          Install or update on Termux:
+
+          \`\`\`sh
+          curl -fsSL https://raw.githubusercontent.com/$GITHUB_REPOSITORY/dev/install.sh | bash
+          \`\`\`
+          EOF
+          # The heredoc is indented for readability; markdown would read the
+          # indentation as code blocks, so take it back out.
+          sed -i 's/^          //' release-notes.md
+          cat release-notes.md
+
+          # A rebuild of the same engine version replaces the archive in place
+          # rather than making a second release: the bootstrapper compares
+          # versions to decide whether an update exists, so two releases claiming
+          # one version would leave it with nothing sensible to compare.
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            printf 'Release %s exists; replacing its archive.\n' "$tag"
+            gh release upload "$tag" antigravity-termux-standalone.tar.gz \
+              --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
+              --notes-file release-notes.md
+          else
+            printf 'Creating release %s.\n' "$tag"
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Antigravity CLI Termux Standalone v$VERSION (with agy provider)" \
+              --notes-file release-notes.md \
+              antigravity-termux-standalone.tar.gz
+          fi
+
+      - name: Summary
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          size=$(du -h antigravity-termux-standalone.tar.gz | cut -f1)
+          digest=$(sha256sum antigravity-termux-standalone.tar.gz | cut -d' ' -f1)
+          install_url="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/dev/install.sh"
+
+          cat >summary.md <<EOF
+          ### Fork release v$VERSION
+
+          | Property | Value |
+          | --- | --- |
+          | Archive | antigravity-termux-standalone.tar.gz |
+          | Size | $size |
+          | SHA-256 | $digest |
+
+          Install or update on Termux:
+
+          \`\`\`sh
+          curl -fsSL $install_url | bash
+          \`\`\`
+          EOF
+          # The heredoc is indented to stay inside the YAML block; markdown would
+          # read that indentation as a code block, so take it back out.
+          sed -i 's/^          //' summary.md
+          cat summary.md >>"$GITHUB_STEP_SUMMARY"
