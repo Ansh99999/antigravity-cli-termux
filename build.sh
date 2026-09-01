@@ -40,10 +40,14 @@ Arguments:
 Environment:
   AGY_VERSION                      Version to embed when building from a local binary.
                                    Required if that binary cannot run on this host.
+  AGY_REQUIRE_PROVIDER=1           Fail instead of warning when the provider helper
+                                   cannot be built (what CI sets, so a release is
+                                   never published without it).
 
 Requirements:
   - curl, jq, tar, python3
   - native aarch64 Termux clang, or \$ANDROID_NDK_HOME with an aarch64 Android clang
+  - go (for the agy-provider helper; optional, see AGY_REQUIRE_PROVIDER)
 EOF
 }
 
@@ -238,6 +242,34 @@ fi
 
 chmod +x bin/agy
 ok "Native Termux bootstrapper compiled successfully."
+
+# Compile the provider helper. It is a separate, pure-Go static binary rather
+# than more C: it speaks three HTTP dialects and runs a streaming proxy, and it
+# has to do so with no cgo, so the package stays relocatable.
+build_provider_helper() {
+  if ! command -v go &>/dev/null; then
+    if [[ "${AGY_REQUIRE_PROVIDER:-}" == "1" ]]; then
+      die "go is required to build the agy-provider helper (AGY_REQUIRE_PROVIDER=1)."
+    fi
+    error "go not found; skipping the agy-provider helper."
+    error "\`agy provider\` will be unavailable in this build. Install go and rebuild to add it."
+    return 0
+  fi
+
+  info "Compiling agy-provider helper ($(go version | awk '{print $3}'))..."
+  # android/arm64 gives a position-independent executable, which Android
+  # requires; a plain linux/arm64 build is ET_EXEC and will not start there.
+  if ! (cd provider && GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
+      go build -trimpath -ldflags "-s -w -X main.buildVersion=$latest_version" \
+      -o ../bin/agy-provider ./cmd/agy-provider); then
+    die "Compilation of the agy-provider helper failed."
+  fi
+
+  chmod +x bin/agy-provider
+  ok "Provider helper compiled successfully."
+}
+
+build_provider_helper
 
 if [[ -n "${TERMUX_VERSION:-}" ]]; then
   info "Validating built Termux binary with --help..."

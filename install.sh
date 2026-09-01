@@ -293,8 +293,13 @@ download_with_progress "$URL" "$TMP" || die
 tar -xz -C "$EXTRACT_DIR" -f "$TMP" agy agy.va39 >/dev/null 2>&1 &
 spinner $! "Extracting binaries..." || die
 
+# The provider helper is extracted separately and tolerated missing, so this
+# installer still works against an archive built before it existed.
+tar -xz -C "$EXTRACT_DIR" -f "$TMP" agy-provider >/dev/null 2>&1 || true
+
 AGY_BAK=""
 AGY_VA39_BAK=""
+AGY_PROVIDER_BAK=""
 if [[ -f "$INSTALL_BIN_DIR/agy" ]]; then
   AGY_BAK="$INSTALL_BIN_DIR/agy.bak.$$"
   mv -f "$INSTALL_BIN_DIR/agy" "$AGY_BAK" || die "Failed to back up existing agy binary from $INSTALL_BIN_DIR"
@@ -303,9 +308,18 @@ if [[ -f "$INSTALL_BIN_DIR/agy.va39" ]]; then
   AGY_VA39_BAK="$INSTALL_BIN_DIR/agy.va39.bak.$$"
   mv -f "$INSTALL_BIN_DIR/agy.va39" "$AGY_VA39_BAK" || die "Failed to back up existing agy.va39 binary from $INSTALL_BIN_DIR"
 fi
+if [[ -f "$INSTALL_BIN_DIR/agy-provider" ]]; then
+  AGY_PROVIDER_BAK="$INSTALL_BIN_DIR/agy-provider.bak.$$"
+  mv -f "$INSTALL_BIN_DIR/agy-provider" "$AGY_PROVIDER_BAK" || die "Failed to back up existing agy-provider binary from $INSTALL_BIN_DIR"
+fi
 
 install -m 0755 "$EXTRACT_DIR/agy" "$INSTALL_BIN_DIR/agy" || die "Failed to install agy binary to $INSTALL_BIN_DIR"
 install -m 0755 "$EXTRACT_DIR/agy.va39" "$INSTALL_BIN_DIR/agy.va39" || die "Failed to install agy.va39 binary to $INSTALL_BIN_DIR"
+AGY_PROVIDER_INSTALLED=0
+if [[ -f "$EXTRACT_DIR/agy-provider" ]]; then
+  install -m 0755 "$EXTRACT_DIR/agy-provider" "$INSTALL_BIN_DIR/agy-provider" || die "Failed to install agy-provider binary to $INSTALL_BIN_DIR"
+  AGY_PROVIDER_INSTALLED=1
+fi
 rm -rf "$EXTRACT_DIR"
 
 # ── Verify twin-binary ────────────────────────────────────────────────────────
@@ -321,9 +335,19 @@ if VERSION=$("$INSTALL_BIN_DIR/agy" --version 2>/dev/null); then
   ok "Engine online ($VERSION verified)"
   [[ -n "$AGY_BAK" && -f "$AGY_BAK" ]] && rm -f "$AGY_BAK"
   [[ -n "$AGY_VA39_BAK" && -f "$AGY_VA39_BAK" ]] && rm -f "$AGY_VA39_BAK"
+  [[ -n "$AGY_PROVIDER_BAK" && -f "$AGY_PROVIDER_BAK" ]] && rm -f "$AGY_PROVIDER_BAK"
 else
   rm -f "$INSTALL_BIN_DIR/agy" "$INSTALL_BIN_DIR/agy.va39"
   die "Binaries failed to execute locally. Check dependencies."
+fi
+
+if [[ "$AGY_PROVIDER_INSTALLED" == "1" ]]; then
+  if "$INSTALL_BIN_DIR/agy-provider" --version >/dev/null 2>&1; then
+    ok "Custom providers available (agy provider)"
+  else
+    rm -f "$INSTALL_BIN_DIR/agy-provider"
+    info "The agy-provider helper would not run and was removed; the CLI is unaffected."
+  fi
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────

@@ -107,10 +107,28 @@ jobs:
         run: |
           ./.github/scripts/check-version.sh
 
+      - name: Set up Go
+        if: steps.check_version.outputs.build_needed == 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: provider/go.mod
+          # The helper has no dependencies, so there is no go.sum to cache from.
+          cache: false
+
+      - name: Test Provider Helper
+        if: steps.check_version.outputs.build_needed == 'true'
+        working-directory: provider
+        run: |
+          gofmt -l . | tee /tmp/gofmt.out
+          test ! -s /tmp/gofmt.out
+          go vet ./...
+          go test ./...
+
       - name: Build Standalone Binaries
         if: steps.check_version.outputs.build_needed == 'true'
         env:
           AGY_VERSION: ${{ steps.check_version.outputs.version }}
+          AGY_REQUIRE_PROVIDER: '1'
         run: |
           ./build.sh
 
@@ -118,7 +136,7 @@ jobs:
         if: steps.check_version.outputs.build_needed == 'true'
         run: |
           echo "Packaging standalone release archive..."
-          tar -czf antigravity-termux-standalone.tar.gz -C bin agy agy.va39
+          tar -czf antigravity-termux-standalone.tar.gz -C bin agy agy.va39 agy-provider
 
       - name: Upload Standalone Archive to Run Artifacts
         if: steps.check_version.outputs.build_needed == 'true'
@@ -187,12 +205,48 @@ jobs:
 
         test -x "$PREFIX/bin/agy"
         test -x "$PREFIX/bin/agy.va39"
+        test -x "$PREFIX/bin/agy-provider"
 
         version_output=$("$PREFIX/bin/agy" --version)
         printf 'agy version: %s\n' "$version_output"
         printf '%s\n' "$version_output" | grep -F "$AGY_EXPECTED_VERSION" >/dev/null
 
         "$PREFIX/bin/agy" --help >/dev/null
+
+        # `agy provider` reaches the helper through the bootstrapper, so this
+        # exercises the interception, not just the helper.
+        export AGY_PROVIDER_HOME="$PWD/agy-provider-home"
+        export AGY_CLI_SETTINGS="$PWD/agy-cli-settings.json"
+
+        "$PREFIX/bin/agy" provider --help >/dev/null
+        "$PREFIX/bin/agy" provider list | grep -F "No providers configured" >/dev/null
+
+        "$PREFIX/bin/agy" provider add \
+          --no-prompt --name smoke --kind openai \
+          --base-url https://api.example.invalid/v1 \
+          --key sk-smoke-not-a-real-key --model demo-model >/dev/null
+
+        "$PREFIX/bin/agy" provider list | grep -F smoke >/dev/null
+        "$PREFIX/bin/agy" provider status | grep -F 'modelProvider = gemini' >/dev/null
+        grep -F '"modelProvider": "gemini"' "$AGY_CLI_SETTINGS" >/dev/null
+
+        # A registry naming a host that does not resolve must still produce an
+        # environment and a live proxy, since the engine has to start regardless.
+        env_lines=$("$PREFIX/bin/agy-provider" up)
+        printf 'launch environment:\n%s\n' "$env_lines"
+        printf '%s\n' "$env_lines" | grep -E '^GEMINI_API_KEY=agy-' >/dev/null
+        printf '%s\n' "$env_lines" | grep -E '^GOOGLE_GEMINI_BASE_URL=http://127\.0\.0\.1:[0-9]+$' >/dev/null
+
+        port=$(printf '%s\n' "$env_lines" | sed -n 's|^GOOGLE_GEMINI_BASE_URL=http://127\.0\.0\.1:||p')
+        curl -fsS "http://127.0.0.1:$port/__agy/health" | grep -F '"provider":"smoke"' >/dev/null
+
+        "$PREFIX/bin/agy" provider stop | grep -F 'stopped' >/dev/null
+        "$PREFIX/bin/agy" provider use none >/dev/null
+        test -z "$("$PREFIX/bin/agy-provider" up)"
+        ! grep -F '"modelProvider"' "$AGY_CLI_SETTINGS" >/dev/null
+
+        "$PREFIX/bin/agy" provider install-skill >/dev/null
+        test -f "$HOME/.gemini/antigravity-cli/skills/provider.md"
 
   release-artifact-smoke:
     name: Release Artifact Smoke Test
@@ -252,6 +306,10 @@ jobs:
         printf '%s\n' "$version_output" | grep -F "$AGY_EXPECTED_VERSION" >/dev/null
 
         "$agy" --help >/dev/null
+
+        provider="$(dirname "$agy")/agy-provider"
+        test -x "$provider"
+        AGY_PROVIDER_HOME="$PWD/agy-smoke-home" "$provider" list >/dev/null
 
   publish-release:
     name: Publish Release

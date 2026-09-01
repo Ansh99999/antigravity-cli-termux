@@ -142,6 +142,75 @@ The CLI authenticates via the system keyring, falling back to Google Sign-In if 
 
 ---
 
+## Custom Providers (`agy provider`)
+
+A Termux-only addition to this fork. It points the engine at an endpoint of your
+own — an OpenAI-compatible gateway, an Anthropic-compatible one, or another
+Gemini host — with as many API keys as you like and a rotation strategy over
+them. Everything stays on the device: keys live in
+`$HOME/.config/agy/providers.json` at mode `0600` and are sent only to the base
+URL you set.
+
+```bash
+agy provider add                 # asks for each field, key entry is not echoed
+agy provider list                # what is configured, and what is active
+agy provider models mine         # ask the endpoint what it serves, pin one
+agy provider key add mine        # add another key
+agy provider strategy mine rotate
+agy provider test mine --chat    # prove the whole path with one short prompt
+agy provider status              # key health, cooldowns, the proxy
+agy provider use none            # back to the normal Google sign-in
+```
+
+Run `agy provider install-skill` once to get `/provider` in the CLI's slash-command
+menu. Registered skills become slash commands, so `/provider` asks the agent to
+run these same commands and report back — a fork cannot add a command to the
+engine itself.
+
+### How it works
+
+The engine can already be pointed at a Gemini-shaped endpoint: with
+`modelProvider: "gemini"` in `settings.json` it reads `GEMINI_API_KEY` and
+`GOOGLE_GEMINI_BASE_URL` from the environment. The bootstrapper sets both before
+handing off, so a Gemini-shaped host with a single key is spoken to **directly** —
+no extra process involved.
+
+Anything else needs translating, and that is what the bundled `agy-provider`
+binary does. It runs a loopback proxy that speaks Gemini's
+`generateContent`/`streamGenerateContent` inbound and OpenAI's
+`/chat/completions` or Anthropic's `/v1/messages` outbound — including tool calls,
+attachments, thinking and streaming — and that is also where key rotation and
+failover happen, per request:
+
+| Situation | Route |
+| --- | --- |
+| Gemini host, one key | direct |
+| Gemini host, several keys, a pinned model or extra headers | proxy |
+| OpenAI- or Anthropic-shaped host | proxy |
+
+The proxy binds `127.0.0.1` only and requires the token the launcher gave the
+engine, so nothing else on the device can use it as a relay to your keys. It
+re-reads the registry as it runs, which is why `agy provider use <name>` takes
+effect on the next request when the proxy is serving; a direct provider needs
+`agy` restarted.
+
+Rotation strategies are `first` (the rest are failover), `rotate`, `random` and
+`least-errors`. A key rejected with 429 or 5xx rests for a minute; one rejected
+as invalid or unfunded rests ten times longer; a 400 rests nothing, since every
+key would fail the same way. A retry happens before any bytes reach the CLI, so
+rotation is invisible.
+
+> [!NOTE]
+> Which models the `/model` picker offers on this route is decided by the engine,
+> not by the proxy. Pin what actually gets sent with
+> `agy provider models <name> --set <model>`, or map one name onto another with
+> `--map gemini-3-pro=<model>`.
+
+Set `AGY_NO_PROVIDER=1` to make a launch ignore all of this.
+Architecture and development notes: [`provider/README.md`](provider/README.md).
+
+---
+
 ## Terms of Service & Data Use
 
 > [!WARNING]

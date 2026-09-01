@@ -65,6 +65,14 @@ def is_termux_helper(path: str) -> bool:
     return path in ALL_TERMUX_HELPERS
 
 
+def is_provider_source(path: str) -> bool:
+    return under(path, "provider")
+
+
+def go_check_path(path: str) -> bool:
+    return is_provider_source(path) or is_pr_workflow(path) or is_termux_helper(path)
+
+
 def c_format_path(path: str) -> bool:
     return (
         is_c_source(path)
@@ -83,7 +91,13 @@ def termux_compile_path(path: str) -> bool:
 
 
 def build_package_path(path: str) -> bool:
-    return path == "build.sh" or under(path, "lib") or is_pr_workflow(path) or is_termux_helper(path)
+    return (
+        path == "build.sh"
+        or under(path, "lib")
+        or is_provider_source(path)
+        or is_pr_workflow(path)
+        or is_termux_helper(path)
+    )
 
 
 def installer_smoke_path(path: str) -> bool:
@@ -110,6 +124,7 @@ PREDICATES = {
     "installer-smoke": installer_smoke_path,
     "shellcheck": shellcheck_path,
     "actionlint": actionlint_path,
+    "go-check": go_check_path,
 }
 
 

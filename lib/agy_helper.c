@@ -506,6 +506,192 @@ static void check_and_perform_update(enum update_check_mode mode, const char *di
     }
 }
 
+// ---------------------------------------------------------------------------
+// Custom providers
+//
+// `agy provider ...` is forwarded to the agy-provider binary installed beside
+// this one, and every ordinary launch asks that same binary whether a provider
+// of the user's should be in play. It answers with the environment to hand the
+// engine, which is how a custom endpoint and its keys reach a binary that only
+// reads them from the environment.
+// ---------------------------------------------------------------------------
+
+#define AGY_PROVIDER_BINARY "agy-provider"
+
+// AGY_ENV_ALLOWLIST is every variable the provider helper is permitted to set.
+// It is a fixed list rather than a pattern on purpose: the helper reads a config
+// file, and a config file must never be able to put LD_PRELOAD or PATH into the
+// engine's environment. Adding a variable means adding it here.
+static const char *const agy_env_allowlist[] = {
+    "GEMINI_API_KEY",
+    "GOOGLE_GEMINI_BASE_URL",
+};
+
+static int agy_env_allowed(const char *name) {
+    const size_t count = sizeof(agy_env_allowlist) / sizeof(agy_env_allowlist[0]);
+
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(name, agy_env_allowlist[i]) == 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int resolve_provider_binary(const char *dir, char *path, size_t path_size) {
+    int written = snprintf(path, path_size, "%s/%s", dir, AGY_PROVIDER_BINARY);
+
+    if (written < 0 || written >= (int)path_size) {
+        return 0;
+    }
+
+    return access(path, X_OK) == 0;
+}
+
+static int is_provider_command(int argc, char **argv) {
+    return argc >= 2 && strcmp(argv[1], "provider") == 0;
+}
+
+// Hand the whole invocation to the provider helper. execv replaces this process,
+// so its exit status and its terminal are the user's directly.
+static int handle_provider_command(const char *dir, int argc, char **argv) {
+    char program[PATH_MAX];
+
+    if (!resolve_provider_binary(dir, program, sizeof(program))) {
+        (void)fprintf(stderr, "[agy-termux] %s is not installed next to agy.\n",
+                      AGY_PROVIDER_BINARY);
+        (void)fprintf(stderr, "[agy-termux] Reinstall to add it: "
+                              "curl -fsSL https://raw.githubusercontent.com/"
+                              "wallentx/antigravity-cli-termux/dev/install.sh | bash\n");
+        return 1;
+    }
+
+    char **child_argv = malloc((size_t)argc * sizeof(*child_argv));
+    if (child_argv == NULL) {
+        return 1;
+    }
+
+    int child_argc = 0;
+    child_argv[child_argc++] = program;
+    for (int i = 2; i < argc; i++) {
+        child_argv[child_argc++] = argv[i];
+    }
+    child_argv[child_argc] = NULL;
+
+    // NOLINTNEXTLINE(clang-analyzer-optin.taint.GenericTaint)
+    (void)execv(program, child_argv);
+    perror("[agy-termux] execv (agy-provider) failed");
+    free(child_argv);
+    return 1;
+}
+
+// Run `agy-provider up` and collect its stdout. A pipe and execv rather than
+// popen: the install directory comes from /proc/self/exe and must never be
+// pasted into a shell command.
+static int capture_provider_environment(const char *program, char *buffer, size_t buffer_size) {
+    int fds[2];
+
+    if (pipe(fds) != 0) {
+        return 0;
+    }
+
+    pid_t child = fork();
+    if (child < 0) {
+        (void)close(fds[0]);
+        (void)close(fds[1]);
+        return 0;
+    }
+
+    if (child == 0) {
+        (void)close(fds[0]);
+        if (dup2(fds[1], STDOUT_FILENO) < 0) {
+            _exit(127);
+        }
+        (void)close(fds[1]);
+
+        char *child_argv[] = {(char *)program, (char *)"up", NULL};
+        // NOLINTNEXTLINE(clang-analyzer-optin.taint.GenericTaint)
+        (void)execv(program, child_argv);
+        _exit(127);
+    }
+
+    (void)close(fds[1]);
+
+    size_t total = 0;
+    while (total + 1 < buffer_size) {
+        ssize_t received = read(fds[0], buffer + total, buffer_size - total - 1);
+        if (received < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+        if (received == 0) {
+            break;
+        }
+        total += (size_t)received;
+    }
+    buffer[total] = '\0';
+    (void)close(fds[0]);
+
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno != EINTR) {
+            return 0;
+        }
+    }
+
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+// Apply the NAME=VALUE lines the helper printed, ignoring anything else it said.
+static void apply_provider_environment_lines(char *buffer) {
+    char *cursor = buffer;
+
+    while (*cursor != '\0') {
+        char *newline = strchr(cursor, '\n');
+        if (newline != NULL) {
+            *newline = '\0';
+        }
+
+        char *separator = strchr(cursor, '=');
+        if (separator != NULL && separator != cursor) {
+            *separator = '\0';
+            if (agy_env_allowed(cursor)) {
+                (void)setenv(cursor, separator + 1, 1);
+            }
+        }
+
+        if (newline == NULL) {
+            break;
+        }
+        cursor = newline + 1;
+    }
+}
+
+// Ask the provider helper how this launch should be pointed, and point it. A
+// helper that is missing, fails or has nothing to say leaves the environment
+// exactly as it was, so the engine falls back to its own Google sign-in.
+static void apply_provider_environment(const char *dir) {
+    char program[PATH_MAX];
+    // Large enough for both variables with room to spare; a key and a URL are
+    // short, and anything longer than this is not one.
+    char output[8192];
+
+    if (env_var_enabled("AGY_NO_PROVIDER")) {
+        return;
+    }
+    if (!resolve_provider_binary(dir, program, sizeof(program))) {
+        return;
+    }
+    if (!capture_provider_environment(program, output, sizeof(output))) {
+        return;
+    }
+
+    apply_provider_environment_lines(output);
+}
+
 static int is_update_help_flag(const char *arg) {
     return strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0;
 }
@@ -640,6 +826,31 @@ static int resolve_qemu_for_cpu(const char *prefix, char *qemu_path, size_t qemu
     return 0;
 }
 
+// handle_intercepted_command runs the subcommands the bootstrapper answers
+// itself instead of handing them to the engine. It returns 1 when it dealt with
+// the invocation, leaving the process's exit code in *exit_code.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+static int handle_intercepted_command(const char *dir, const char *prefix_path, int argc,
+                                      char **argv, int *exit_code) {
+    if (is_provider_command(argc, argv)) {
+        *exit_code = handle_provider_command(dir, argc, argv);
+        return 1;
+    }
+
+    if (!is_update_command(argc, argv)) {
+        return 0;
+    }
+
+    // Asking for the usage text needs no network, so it needs no resolver.
+    if (!update_command_requests_help(argc, argv) && !require_resolver_config(prefix_path)) {
+        *exit_code = 1;
+        return 1;
+    }
+
+    *exit_code = handle_update_command(dir, argc, argv);
+    return 1;
+}
+
 int main(int argc, char **argv) {
     char exec_path[PATH_MAX];
     char lib_path[PATH_MAX + 16];
@@ -706,14 +917,11 @@ int main(int argc, char **argv) {
     exec_path[read_len] = '\0';
     dir = dirname(exec_path);
 
-    if (is_update_command(argc, argv)) {
-        if (update_command_requests_help(argc, argv)) {
-            return handle_update_command(dir, argc, argv);
-        }
-        if (!require_resolver_config(prefix_path)) {
-            return 1;
-        }
-        return handle_update_command(dir, argc, argv);
+    // `agy provider ...` and `agy update` are the bootstrapper's own command
+    // lines, not the engine's.
+    int intercepted_exit = 0;
+    if (handle_intercepted_command(dir, prefix_path, argc, argv, &intercepted_exit)) {
+        return intercepted_exit;
     }
 
     if (!require_resolver_config(prefix_path)) {
@@ -721,6 +929,11 @@ int main(int argc, char **argv) {
     }
 
     perform_startup_update_check(dir, argc, argv);
+
+    // Point the engine at a custom provider if one is configured. This has to
+    // happen before the handoff, because the environment is the only channel
+    // the engine reads an endpoint and a key from.
+    apply_provider_environment(dir);
 
     // Use only the Termux glibc runtime libraries.
     written = snprintf(lib_path, sizeof(lib_path), "%s/glibc/lib", prefix_path);
