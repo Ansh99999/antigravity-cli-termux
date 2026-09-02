@@ -4,6 +4,16 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+## 1.1.24
+
+- Improved `/mcp` panel navigation so up and down arrow keys strictly navigate between MCP servers and plugins, left and right arrow keys cycle available actions, and `Esc` exits action mode or the panel.
+- Fixed duplicate agent entries appearing in the `/agents` picker when an agent with the same name is discovered across multiple configuration sources or plugins.
+- Fixed tool initialization and agent startup failing when launched from an inaccessible or deleted working directory by using absolute URI schemes for in-memory parameter schemas.
+- Fixed headless CLI invocations with piped standard output or standard error hanging on exit by setting `FD_CLOEXEC` on the preserved streams so child processes do not keep the caller's pipes open.
+- Fixed MCP configuration parsing failing when `mcp_config.json` contains single-line (`//`) comments, multi-line (`/* */`) comments, or trailing commas.
+- Fixed orphaned annotation files accumulating in local storage when deleting conversations.
+- Fixed `/btw` side questions in conversations with an active `/goal` being forced to continue and making unintended tool calls.
+
 ## 1.1.23
 
 - Improved `/model <name>` autocompletion to accept the proposed model name ghost text with `Tab`.
