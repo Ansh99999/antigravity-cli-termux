@@ -4,6 +4,19 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+## 1.1.25
+
+- Added an opt-in workspace-grouped view to the `/resume` conversation picker, allowing users to toggle between a flat list and conversations grouped by directory with `Ctrl+F`.
+- Added Gemini 3.8 Flash to the model catalog when connecting with a `GEMINI_API_KEY`.
+- Changed custom agents defined in Markdown to inherit ambient skills, rules, and subagents by default, matching the configuration of default agents.
+- Fixed MCP OAuth authentication failing when authorization servers return authorization codes longer than 1024 characters.
+- Fixed skill path matching and grouping in the `/skills` panel on Windows where host path separators (`\`) caused global and workspace skills to be misclassified.
+- Fixed relative path resolution in Markdown-defined custom agents so relative subagent and plugin paths resolve correctly against the agent definition's directory.
+- Fixed duplicate permission grants accumulating in configuration settings across session reloads and subagent invocations.
+- Fixed /boost failing at runtime by improving worker tool configurations.
+- Fixed a fatal nil pointer crash in the agent runtime caused by background summary updates attempting to read cached steps after trajectory closure.
+- Hardened Remote Control reverse-tunnel routing.
+
 ## 1.1.24
 
 - Improved `/mcp` panel navigation so up and down arrow keys strictly navigate between MCP servers and plugins, left and right arrow keys cycle available actions, and `Esc` exits action mode or the panel.
