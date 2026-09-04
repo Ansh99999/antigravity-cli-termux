@@ -4,6 +4,18 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+## 1.1.26
+
+- Added half-page scrolling with `Ctrl+D` and `Ctrl+U` to the artifact viewer.
+- Added the `pickerGrouping` setting to `/config` and `settings.json` to configure the default conversation list view in `/resume` (flat or grouped by workspace).
+- Improved terminal ASCII diagram rendering for Mermaid flowcharts in the artifact viewer and conversation.
+- Improved `/logout` execution time by short-circuiting token removal directly to file storage when keyring storage is bypassed or unreachable.
+- Changed unselected model families in the interactive `/model` picker to default to medium reasoning effort instead of low.
+- Fixed subagent tasks unexpectedly prompting for tool approval in always-proceed mode while viewing the subagent details panel.
+- Fixed orphaned Git worktrees accumulating on disk under `.system_generated/worktrees` when killing subagents or deleting conversations.
+- Fixed SQLite database WAL checkpointing on CLI exit so trailing session metadata updates are flushed to disk before shutdown.
+- Fixed customization discovery logging spurious errors when accessing temporary directories or paths outside the active workspace.
+
 ## 1.1.25
 
 - Added an opt-in workspace-grouped view to the `/resume` conversation picker, allowing users to toggle between a flat list and conversations grouped by directory with `Ctrl+F`.
