@@ -4,6 +4,22 @@
 
 The terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.
 
+## 1.1.27
+
+- Added `/model <name> <prompt>`, which runs a single prompt on another model and then returns the session to the model it was using, so you can consult a different model mid-conversation without disturbing your saved default.
+- Added a `conversation_title` field to the JSON payload passed to custom status line and window title scripts, so they can show the active conversation's name and pick up renames immediately.
+- Added an `agents` list to custom agent Markdown frontmatter, letting an agent declare the subagents it depends on using the same workspace-relative, absolute, and agent-relative path rules as `skills`.
+- Improved `/model` to show a `[model]` argument hint as you type, so the command's arguments are discoverable without opening help.
+- Improved the `/settings` panel so each Verbosity option explains itself as you highlight it, describing whether tool calls, commands, and thoughts are shown in full or collapsed into a token metrics table.
+- Improved the sign-in and Google Cloud setup screens to use the CLI's standard styled key hints, which follow your color scheme and keybindings and drop the navigation hint when only one option is available.
+- Changed `/model <name>` to report `Model already set to <name>` when the session is already using that model, instead of reporting a switch that did not happen.
+- Fixed tool calls to MCP servers accepting arguments the server's own schema never declared, so an invented parameter is now rejected and corrected instead of being silently dropped.
+- Fixed headless runs with `-p` silently skipping tool actions they were not permitted to take, which now end with a notice naming the refused actions and report them as `denied_actions` in the JSON output.
+- Fixed `?` in Vim Normal mode opening the shortcuts panel while the prompt already contained text, so character-search and replace operators such as `f?`, `t?`, and `df?` work; `?` still opens shortcuts on an empty prompt.
+- Fixed `/model` with no argument doing nothing when run before the session had finished starting up, so it now opens the model picker.
+- Fixed print mode (`-p`) exiting before the session finished shutting down, which could drop the run's trailing conversation history before it reached disk.
+- Fixed a redundant approval prompt when the agent reads or writes another conversation's artifact files after you have already allowed access to files outside your workspace.
+
 ## 1.1.26
 
 - Added half-page scrolling with `Ctrl+D` and `Ctrl+U` to the artifact viewer.
